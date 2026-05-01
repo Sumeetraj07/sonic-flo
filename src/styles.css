@@ -46,51 +46,51 @@
 :root {
   --radius: 1rem;
 
-  /* Premium dark DJ theme */
-  --background: oklch(0.13 0.02 280);
-  --foreground: oklch(0.97 0.01 280);
-  --card: oklch(0.17 0.025 278);
-  --card-foreground: oklch(0.97 0.01 280);
-  --popover: oklch(0.17 0.025 278);
-  --popover-foreground: oklch(0.97 0.01 280);
+  /* Premium red / cream / white / grey theme */
+  --background: oklch(0.97 0.012 75);          /* warm cream */
+  --foreground: oklch(0.22 0.02 25);           /* near-black warm */
+  --card: oklch(1 0 0);                        /* white */
+  --card-foreground: oklch(0.22 0.02 25);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.02 25);
 
-  --primary: oklch(0.78 0.18 195);            /* cyan */
-  --primary-foreground: oklch(0.12 0.02 280);
-  --secondary: oklch(0.22 0.04 285);
-  --secondary-foreground: oklch(0.97 0.01 280);
-  --muted: oklch(0.22 0.03 285);
-  --muted-foreground: oklch(0.68 0.03 280);
-  --accent: oklch(0.7 0.25 330);              /* magenta */
-  --accent-foreground: oklch(0.12 0.02 280);
-  --destructive: oklch(0.65 0.24 25);
-  --destructive-foreground: oklch(0.98 0.01 280);
-  --border: oklch(1 0 0 / 0.08);
-  --input: oklch(1 0 0 / 0.1);
-  --ring: oklch(0.78 0.18 195);
+  --primary: oklch(0.58 0.22 27);              /* signature red */
+  --primary-foreground: oklch(0.98 0.005 75);
+  --secondary: oklch(0.93 0.012 70);           /* light cream-grey */
+  --secondary-foreground: oklch(0.25 0.02 25);
+  --muted: oklch(0.94 0.008 70);
+  --muted-foreground: oklch(0.45 0.015 25);
+  --accent: oklch(0.66 0.2 32);                /* warm coral-red */
+  --accent-foreground: oklch(0.98 0.005 75);
+  --destructive: oklch(0.55 0.24 22);
+  --destructive-foreground: oklch(0.98 0.005 75);
+  --border: oklch(0.22 0.02 25 / 0.1);
+  --input: oklch(0.22 0.02 25 / 0.12);
+  --ring: oklch(0.58 0.22 27);
 
-  /* Neon accents */
-  --neon-cyan: oklch(0.85 0.18 195);
-  --neon-magenta: oklch(0.72 0.27 330);
-  --neon-violet: oklch(0.65 0.25 295);
-  --neon-lime: oklch(0.9 0.2 130);
+  /* Accents (kept names for backwards compat in components) */
+  --neon-cyan: oklch(0.58 0.22 27);            /* red */
+  --neon-magenta: oklch(0.66 0.2 32);          /* coral */
+  --neon-violet: oklch(0.45 0.02 25);          /* dark grey */
+  --neon-lime: oklch(0.5 0.18 30);             /* deep red */
 
-  /* Glass surfaces */
-  --glass: oklch(1 0 0 / 0.04);
-  --glass-strong: oklch(1 0 0 / 0.08);
+  /* Glass surfaces — light variant */
+  --glass: oklch(1 0 0 / 0.55);
+  --glass-strong: oklch(1 0 0 / 0.75);
 
   /* Gradients */
-  --gradient-hero: radial-gradient(ellipse at top, oklch(0.3 0.18 295 / 0.5), transparent 60%),
-                   radial-gradient(ellipse at bottom right, oklch(0.4 0.2 330 / 0.35), transparent 55%),
-                   radial-gradient(ellipse at bottom left, oklch(0.4 0.2 195 / 0.35), transparent 55%);
-  --gradient-neon: linear-gradient(135deg, var(--neon-cyan), var(--neon-magenta));
-  --gradient-violet: linear-gradient(135deg, var(--neon-violet), var(--neon-cyan));
-  --gradient-text: linear-gradient(135deg, oklch(0.95 0.05 195), oklch(0.85 0.2 330));
+  --gradient-hero: radial-gradient(ellipse at top, oklch(0.58 0.22 27 / 0.18), transparent 60%),
+                   radial-gradient(ellipse at bottom right, oklch(0.66 0.2 32 / 0.14), transparent 55%),
+                   radial-gradient(ellipse at bottom left, oklch(0.85 0.02 70 / 0.6), transparent 55%);
+  --gradient-neon: linear-gradient(135deg, oklch(0.58 0.22 27), oklch(0.66 0.2 32));
+  --gradient-violet: linear-gradient(135deg, oklch(0.45 0.02 25), oklch(0.58 0.22 27));
+  --gradient-text: linear-gradient(135deg, oklch(0.5 0.22 27), oklch(0.66 0.2 32));
 
   /* Shadows */
-  --shadow-glow-cyan: 0 0 40px oklch(0.78 0.18 195 / 0.4), 0 0 80px oklch(0.78 0.18 195 / 0.2);
-  --shadow-glow-magenta: 0 0 40px oklch(0.72 0.27 330 / 0.4), 0 0 80px oklch(0.72 0.27 330 / 0.2);
-  --shadow-elevated: 0 30px 80px -20px oklch(0 0 0 / 0.6), 0 0 0 1px oklch(1 0 0 / 0.05);
-  --shadow-glass: 0 8px 32px oklch(0 0 0 / 0.4), inset 0 1px 0 oklch(1 0 0 / 0.08);
+  --shadow-glow-cyan: 0 0 36px oklch(0.58 0.22 27 / 0.28), 0 0 72px oklch(0.58 0.22 27 / 0.14);
+  --shadow-glow-magenta: 0 0 36px oklch(0.66 0.2 32 / 0.28), 0 0 72px oklch(0.66 0.2 32 / 0.14);
+  --shadow-elevated: 0 30px 80px -20px oklch(0.22 0.02 25 / 0.18), 0 0 0 1px oklch(0.22 0.02 25 / 0.06);
+  --shadow-glass: 0 8px 32px oklch(0.22 0.02 25 / 0.08), inset 0 1px 0 oklch(1 0 0 / 0.6);
 
   --sidebar: var(--card);
   --sidebar-foreground: var(--foreground);
