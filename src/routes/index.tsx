@@ -135,7 +135,7 @@ function Landing() {
 function Disc(props: { className?: string }) {
   return <Disc3 {...props} />;
 }
-import { Disc3 } from "lucide-react";
+
 
 function Feature({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
