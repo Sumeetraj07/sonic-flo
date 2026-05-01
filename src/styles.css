@@ -120,7 +120,7 @@
     background-attachment: fixed;
   }
 
-  ::selection { background: var(--neon-cyan); color: var(--background); }
+  ::selection { background: var(--primary); color: var(--primary-foreground); }
 }
 
 @layer components {
@@ -167,8 +167,8 @@
 
   .grid-bg {
     background-image:
-      linear-gradient(oklch(1 0 0 / 0.04) 1px, transparent 1px),
-      linear-gradient(90deg, oklch(1 0 0 / 0.04) 1px, transparent 1px);
+      linear-gradient(oklch(0.22 0.02 25 / 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(0.22 0.02 25 / 0.05) 1px, transparent 1px);
     background-size: 48px 48px;
   }
 
