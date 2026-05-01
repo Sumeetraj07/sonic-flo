@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { motion } from "framer-motion";
-import { Sparkles, Waves, Zap, Music2, ArrowRight, Headphones } from "lucide-react";
+import { Sparkles, Waves, Zap, Music2, ArrowRight, Headphones, Disc3 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
