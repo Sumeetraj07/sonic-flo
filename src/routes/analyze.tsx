@@ -9,7 +9,7 @@ import { Waveform } from "../components/Waveform";
 export const Route = createFileRoute("/analyze")({
   head: () => ({
     meta: [
-      { title: "Track Analysis — AURA.dj" },
+      { title: "Track Analysis — NARCOTICS.dj" },
       { name: "description", content: "AI intelligence for every track: BPM, key, energy, loudness, and recommended next track." },
     ],
   }),

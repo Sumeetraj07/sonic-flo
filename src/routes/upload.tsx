@@ -1,14 +1,14 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
-import { useCallback, useRef, useState } from "react";
-import { UploadCloud, X, Music, ArrowRight, Loader2, FileAudio, HardDrive, Music2, Info, ExternalLink } from "lucide-react";
+import { useCallback, useRef, useState, useEffect } from "react";
+import { UploadCloud, X, Music, ArrowRight, Loader2, FileAudio, HardDrive, Music2, Info, ExternalLink, Pencil } from "lucide-react";
 import { mixStore, useMixStore } from "../lib/mix-store";
 import { analyzeFile } from "../lib/audio-engine";
 
 export const Route = createFileRoute("/upload")({
   head: () => ({
     meta: [
-      { title: "Upload Studio — AURA.dj" },
+      { title: "Upload Studio — NARCOTICS.dj" },
       { name: "description", content: "Drop up to 20 audio tracks or import a Spotify / Apple Music playlist." },
     ],
   }),
@@ -16,7 +16,7 @@ export const Route = createFileRoute("/upload")({
 });
 
 const ACCEPT = [".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg"];
-const MAX = 20;
+const MAX = 80;
 
 type SourceTab = "files" | "spotify" | "apple";
 
@@ -49,12 +49,12 @@ function UploadStudio() {
             )}
             {tab === "spotify" && (
               <motion.div key="spotify" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                <StreamingPanel service="Spotify" color="oklch(0.65 0.2 145)" />
+                <SpotifyPanel />
               </motion.div>
             )}
             {tab === "apple" && (
               <motion.div key="apple" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                <StreamingPanel service="Apple Music" color="oklch(0.62 0.22 0)" />
+                <ApplePanel />
               </motion.div>
             )}
           </AnimatePresence>
@@ -81,12 +81,10 @@ function TabBtn({ active, onClick, icon, label }: { active: boolean; onClick: ()
   );
 }
 
-function FilesPanel() {
-  const [dragOver, setDragOver] = useState(false);
+function useAudioUploader() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ name: string; pct: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = useCallback(async (files: FileList | File[]) => {
     setError(null);
@@ -115,12 +113,23 @@ function FilesPanel() {
         analyzed.push(t);
       } catch (e) {
         console.error("Failed to analyze", f.name, e);
+        setError(`Failed to analyze "${f.name}". It might be blocked or an invalid audio format.`);
       }
     }
-    mixStore.addTracks(analyzed);
+    if (analyzed.length > 0) {
+      mixStore.addTracks(analyzed);
+    }
     setProgress(null);
     setBusy(false);
   }, []);
+
+  return { busy, progress, error, setError, handleFiles };
+}
+
+function FilesPanel() {
+  const [dragOver, setDragOver] = useState(false);
+  const { progress, error, handleFiles } = useAudioUploader();
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -190,70 +199,277 @@ function FilesPanel() {
   );
 }
 
-function StreamingPanel({ service, color }: { service: string; color: string }) {
+function SpotifyPanel() {
+  const { busy, progress, error, handleFiles } = useAudioUploader();
+  const [token, setToken] = useState<string | null>(() => sessionStorage.getItem("spotify_token"));
+  const [searchQuery, setSearchQuery] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    // Check if we are returning from an authorization code flow
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    
+    if (code) {
+      const codeVerifier = localStorage.getItem("code_verifier");
+      const clientId = "8c2880a85ae24f5abbfd30da94c87dd8";
+      const redirectUri = window.location.origin + "/upload";
+      
+      fetch("https://accounts.spotify.com/api/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          grant_type: "authorization_code",
+          code: code,
+          redirect_uri: redirectUri,
+          code_verifier: codeVerifier || ""
+        })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.access_token) {
+          sessionStorage.setItem("spotify_token", data.access_token);
+          setToken(data.access_token);
+          window.history.replaceState(null, "", window.location.pathname);
+        } else {
+          console.error("Failed to get token:", data);
+        }
+      })
+      .catch(console.error);
+    } else {
+      // Check hash fallback just in case
+      const hash = window.location.hash;
+      if (hash && hash.includes("access_token")) {
+        const hashParams = new URLSearchParams(hash.substring(1));
+        const t = hashParams.get("access_token");
+        if (t) {
+          sessionStorage.setItem("spotify_token", t);
+          setToken(t);
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+      }
+    }
+  }, []);
+
+  const login = async () => {
+    const clientId = "8c2880a85ae24f5abbfd30da94c87dd8";
+    const redirectUri = window.location.origin + "/upload";
+    
+    // Generate PKCE code verifier and challenge
+    const generateRandomString = (length: number) => {
+      const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      const values = crypto.getRandomValues(new Uint8Array(length));
+      return Array.from(values).map(x => possible[x % possible.length]).join('');
+    };
+    
+    const codeVerifier = generateRandomString(64);
+    localStorage.setItem("code_verifier", codeVerifier);
+    
+    const encoder = new TextEncoder();
+    const data = encoder.encode(codeVerifier);
+    const hashed = await crypto.subtle.digest('SHA-256', data);
+    
+    const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(hashed)))
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+      
+    const authUrl = new URL("https://accounts.spotify.com/authorize");
+    authUrl.searchParams.append("client_id", clientId);
+    authUrl.searchParams.append("response_type", "code");
+    authUrl.searchParams.append("redirect_uri", redirectUri);
+    authUrl.searchParams.append("code_challenge_method", "S256");
+    authUrl.searchParams.append("code_challenge", codeChallenge);
+    
+    window.location.href = authUrl.toString();
+  };
+
+  const search = async () => {
+    if (!searchQuery || !token) return;
+    setSearching(true);
+    try {
+      const res = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=20`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.status === 401) {
+        sessionStorage.removeItem("spotify_token");
+        setToken(null);
+      } else {
+        const data = await res.json();
+        setResults(data.tracks?.items || []);
+      }
+    } catch (e) { console.error(e); }
+    setSearching(false);
+  };
+
+  const addPreview = async (track: any) => {
+    if (!track.preview_url) return;
+    try {
+      const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(track.preview_url)}`);
+      const blob = await res.blob();
+      const file = new File([blob], `${track.name}.mp3`, { type: "audio/mpeg" });
+      await handleFiles([file]);
+    } catch (e) { alert("Failed to fetch preview."); }
+  };
+
   return (
-    <div className="glass-strong rounded-3xl p-8 sm:p-10">
-      <div className="flex items-start gap-5">
-        <div
-          className="shrink-0 w-16 h-16 rounded-2xl flex items-center justify-center text-white"
-          style={{ background: color }}
-        >
-          {service === "Spotify" ? <SpotifyIcon large /> : <AppleIcon large />}
-        </div>
-        <div className="min-w-0 flex-1">
-          <h3 className="font-display text-2xl font-semibold">Connect {service}</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Import your playlists and use track metadata for mix planning.</p>
-        </div>
-      </div>
-
-      {/* Important DRM notice */}
-      <div className="mt-6 rounded-2xl border border-primary/30 bg-primary/5 p-4 sm:p-5 flex gap-3">
-        <Info className="w-5 h-5 text-primary shrink-0 mt-0.5" />
-        <div className="text-sm leading-relaxed">
-          <div className="font-semibold text-foreground">Heads up — streaming audio can't be mixed directly</div>
-          <p className="mt-1 text-muted-foreground">
-            {service} (and Apple Music) protect their audio with DRM, so neither service allows third-party apps to download
-            or process the actual audio of your songs. To build a real mix, the audio file must be on your device.
-          </p>
-          <p className="mt-2 text-muted-foreground">
-            What you <strong className="text-foreground">can</strong> do here:
-          </p>
-          <ul className="mt-1 list-disc pl-5 text-muted-foreground space-y-0.5">
-            <li>Import a playlist's track list (titles, artists, BPM, key, energy)</li>
-            <li>Use it as a reference to plan or order your mix</li>
-            <li>Then upload the matching audio files to render the final DJ mix</li>
-          </ul>
-        </div>
-      </div>
-
-      <div className="mt-6 grid sm:grid-cols-2 gap-3">
-        <button
-          disabled
-          className="glass rounded-2xl p-5 text-left opacity-60 cursor-not-allowed"
-        >
-          <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Coming soon</div>
-          <div className="mt-1 font-display font-semibold flex items-center gap-2">
-            Connect with {service} <ExternalLink className="w-4 h-4" />
+    <div className="glass-strong rounded-3xl p-6 sm:p-10">
+      <div className="text-center mb-8">
+        <Music2 className="w-12 h-12 text-[var(--neon-lime)] mx-auto mb-4" />
+        <h3 className="font-display text-xl font-bold mb-2">Spotify Integration</h3>
+        {!token ? (
+          <>
+            <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
+              Connect to search and import 30-second audio previews directly into your mix.
+            </p>
+            <button onClick={login} className="btn-neon bg-[var(--neon-lime)] text-white hover:bg-[var(--neon-lime)]/90 px-8 py-3 rounded-full font-semibold inline-flex items-center gap-2">
+              <ExternalLink className="w-4 h-4" /> Connect with Spotify
+            </button>
+          </>
+        ) : (
+          <div className="text-left">
+            <div className="flex gap-2 mb-6">
+              <input type="text" className="flex-1 bg-white/5 border border-white/10 rounded-full px-5 py-3 text-sm outline-none focus:border-[var(--neon-lime)] transition-colors" placeholder="Search for a song..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} />
+              <button onClick={search} disabled={searching} className="bg-[var(--neon-lime)] text-black px-6 py-3 rounded-full font-semibold text-sm hover:opacity-90 disabled:opacity-50 transition">{searching ? <Loader2 className="animate-spin w-4 h-4" /> : "Search"}</button>
+            </div>
+            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+              {results.map((t) => (
+                <div key={t.id} className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition">
+                  <div className="flex items-center gap-3 overflow-hidden">
+                    {t.album?.images?.[0] && <img src={t.album.images[0].url} className="w-10 h-10 rounded-md object-cover" alt="Album art" />}
+                    <div className="min-w-0">
+                      <div className="font-semibold text-sm truncate">{t.name}</div>
+                      <div className="text-xs text-muted-foreground truncate">{t.artists?.map((a: any) => a.name).join(", ")}</div>
+                    </div>
+                  </div>
+                  <button onClick={() => addPreview(t)} disabled={!t.preview_url || busy} className="ml-3 shrink-0 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-full text-xs font-semibold transition" title={!t.preview_url ? "No audio preview available from Spotify" : "Add to mix"}>{!t.preview_url ? "No Audio" : "Add"}</button>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            OAuth playlist import requires {service} developer credentials. Ask us to wire this up next.
-          </div>
-        </button>
-
-        <Link
-          to="/upload"
-          onClick={(e) => {
-            e.preventDefault();
-            const el = document.getElementById("files-tab-trigger");
-            el?.click();
-          }}
-          className="rounded-2xl p-5 text-left bg-primary text-primary-foreground hover:opacity-95 transition shadow-md"
-        >
-          <div className="text-xs uppercase tracking-[0.2em] opacity-80">Recommended</div>
-          <div className="mt-1 font-display font-semibold">Upload audio files instead</div>
-          <div className="mt-1 text-xs opacity-90">Drop your MP3/WAV/FLAC files for a real, exportable mix.</div>
-        </Link>
+        )}
       </div>
+      <div className="mt-8 pt-8 border-t border-white/10 text-center">
+        <h4 className="font-semibold mb-3 text-sm">Have full downloaded tracks?</h4>
+        <p className="text-xs text-muted-foreground mb-5">If you used a third-party tool to download full Spotify tracks, upload them here to bypass the 30-second preview limit.</p>
+        <label className="cursor-pointer inline-flex items-center gap-2 bg-primary text-primary-foreground px-6 py-3 rounded-full text-sm font-semibold hover:opacity-90 transition">
+          <UploadCloud className="w-4 h-4" /> Browse Files
+          <input type="file" multiple accept=".mp3,.wav,.flac,.m4a" onChange={(e) => e.target.files && handleFiles(e.target.files)} className="hidden" />
+        </label>
+      </div>
+      {error && <div className="mt-4 glass rounded-xl px-4 py-3 text-sm text-destructive border-destructive/30">{error}</div>}
+      
+      {progress && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 glass rounded-xl p-4">
+          <div className="flex items-center gap-3 text-sm">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            <span className="truncate">Analyzing <span className="text-foreground font-medium">{progress.name}</span>…</span>
+          </div>
+          <div className="mt-3 h-1.5 bg-muted rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-primary to-accent transition-all" style={{ width: `${progress.pct}%` }} />
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
+function ApplePanel() {
+  const { busy, progress, error, handleFiles } = useAudioUploader();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  const search = async () => {
+    if (!searchQuery) return;
+    setSearching(true);
+    try {
+      const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(searchQuery)}&entity=song&limit=20`);
+      const data = await res.json();
+      setResults(data.results || []);
+    } catch (e) { console.error(e); }
+    setSearching(false);
+  };
+
+  const addPreview = async (track: any) => {
+    if (!track.previewUrl) return;
+    try {
+      let res;
+      try {
+        // Try direct fetch first. Apple Music previews often have CORS headers.
+        res = await fetch(track.previewUrl);
+        if (!res.ok) throw new Error("Direct fetch not ok");
+      } catch (directErr) {
+        // Fallback to allorigins raw proxy
+        res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(track.previewUrl)}`);
+      }
+      
+      const blob = await res.blob();
+      if (blob.type.includes("text/html")) {
+         throw new Error("Proxy returned an HTML page instead of an audio file.");
+      }
+      
+      const file = new File([blob], `${track.trackName} - ${track.artistName}.m4a`, { type: "audio/mp4" });
+      await handleFiles([file]);
+    } catch (e) { 
+      console.error(e);
+      alert("Failed to fetch preview. The connection was blocked."); 
+    }
+  };
+
+  return (
+    <div className="glass-strong rounded-3xl p-6 sm:p-10">
+      <div className="text-center mb-8">
+        <div className="w-12 h-12 text-[oklch(0.62_0.22_0)] mx-auto mb-4 flex items-center justify-center">
+          <AppleIcon large />
+        </div>
+        <h3 className="font-display text-xl font-bold mb-2">Apple Music Search</h3>
+        <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
+          Instantly search and import 30-second high-quality audio previews directly into your mix. No login required.
+        </p>
+        <div className="text-left">
+          <div className="flex gap-2 mb-6">
+            <input type="text" className="flex-1 bg-white/5 border border-white/10 rounded-full px-5 py-3 text-sm outline-none focus:border-[oklch(0.62_0.22_0)] transition-colors" placeholder="Search for a song or artist..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} />
+            <button onClick={search} disabled={searching} className="bg-[oklch(0.62_0.22_0)] text-white px-6 py-3 rounded-full font-semibold text-sm hover:opacity-90 disabled:opacity-50 transition">{searching ? <Loader2 className="animate-spin w-4 h-4" /> : "Search"}</button>
+          </div>
+          <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+            {results.map((t) => (
+              <div key={t.trackId} className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition">
+                <div className="flex items-center gap-3 overflow-hidden">
+                  {t.artworkUrl100 && <img src={t.artworkUrl100} className="w-10 h-10 rounded-md object-cover" alt="Album art" />}
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm truncate">{t.trackName}</div>
+                    <div className="text-xs text-muted-foreground truncate">{t.artistName}</div>
+                  </div>
+                </div>
+                <button onClick={() => addPreview(t)} disabled={!t.previewUrl || busy} className="ml-3 shrink-0 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-full text-xs font-semibold transition" title={!t.previewUrl ? "No preview available" : "Add to mix"}>{!t.previewUrl ? "No Audio" : "Add"}</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="mt-8 pt-8 border-t border-white/10 text-center">
+        <h4 className="font-semibold mb-3 text-sm">Have full downloaded tracks?</h4>
+        <p className="text-xs text-muted-foreground mb-5">Upload them directly here to bypass the 30-second preview limit.</p>
+        <label className="cursor-pointer inline-flex items-center gap-2 bg-primary text-primary-foreground px-6 py-3 rounded-full text-sm font-semibold hover:opacity-90 transition">
+          <UploadCloud className="w-4 h-4" /> Browse Files
+          <input type="file" multiple accept=".mp3,.wav,.flac,.m4a" onChange={(e) => e.target.files && handleFiles(e.target.files)} className="hidden" />
+        </label>
+      </div>
+      {error && <div className="mt-4 glass rounded-xl px-4 py-3 text-sm text-destructive border-destructive/30">{error}</div>}
+      {progress && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 glass rounded-xl p-4">
+          <div className="flex items-center gap-3 text-sm">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            <span className="truncate">Analyzing <span className="text-foreground font-medium">{progress.name}</span>…</span>
+          </div>
+          <div className="mt-3 h-1.5 bg-muted rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-primary to-accent transition-all" style={{ width: `${progress.pct}%` }} />
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }
@@ -261,6 +477,21 @@ function StreamingPanel({ service, color }: { service: string; color: string }) 
 function Queue() {
   const { tracks } = useMixStore();
   const navigate = useNavigate();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+
+  const handleEdit = (id: string, name: string) => {
+    setEditingId(id);
+    setEditName(name);
+  };
+
+  const saveEdit = (id: string) => {
+    if (editName.trim()) {
+      mixStore.renameTrack(id, editName.trim());
+    }
+    setEditingId(null);
+  };
+
   return (
     <div className="mt-10">
       <div className="flex items-center justify-between mb-4">
@@ -287,10 +518,29 @@ function Queue() {
                 {String(i + 1).padStart(2, "0")}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="font-medium truncate flex items-center gap-2">
-                  <FileAudio className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  {t.name}
-                </div>
+                {editingId === t.id ? (
+                  <input
+                    autoFocus
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onBlur={() => saveEdit(t.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveEdit(t.id);
+                      if (e.key === "Escape") setEditingId(null);
+                    }}
+                    className="w-full bg-transparent border-b border-primary/50 outline-none font-medium text-sm text-foreground focus:border-primary"
+                  />
+                ) : (
+                  <div 
+                    className="font-medium truncate flex items-center gap-2 group/edit cursor-text"
+                    onClick={() => handleEdit(t.id, t.name)}
+                    title="Click to rename"
+                  >
+                    <FileAudio className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    {t.name}
+                    <Pencil className="w-3 h-3 text-muted-foreground opacity-0 group-hover/edit:opacity-100 transition-opacity" />
+                  </div>
+                )}
                 <div className="text-xs text-muted-foreground font-mono mt-0.5">
                   {t.bpm} BPM · {t.key} · {(t.size / 1024 / 1024).toFixed(1)}MB
                 </div>
@@ -316,15 +566,15 @@ function Queue() {
           </div>
         </div>
         <button
-          disabled={tracks.length < 2}
+          disabled={tracks.length < 4}
           onClick={() => navigate({ to: "/analyze" })}
           className="btn-neon inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-semibold disabled:opacity-40 disabled:pointer-events-none"
         >
           Analyze Tracks <ArrowRight className="w-4 h-4" />
         </button>
       </div>
-      {tracks.length < 2 && (
-        <p className="mt-2 text-xs text-muted-foreground text-center">Add at least 2 tracks to build a mix.</p>
+      {tracks.length < 4 && (
+        <p className="mt-2 text-xs text-muted-foreground text-center">Add at least 4 tracks to build a mix.</p>
       )}
     </div>
   );

@@ -102,7 +102,25 @@
   --sidebar-ring: var(--ring);
 }
 
-.dark { color-scheme: dark; }
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.14 0.02 25);
+  --foreground: oklch(0.98 0.01 75);
+  --card: oklch(0.18 0.02 25);
+  --card-foreground: oklch(0.98 0.01 75);
+  --popover: oklch(0.18 0.02 25);
+  --popover-foreground: oklch(0.98 0.01 75);
+  --primary: oklch(0.58 0.22 27);
+  --primary-foreground: oklch(0.98 0.01 75);
+  --secondary: oklch(0.22 0.02 25);
+  --secondary-foreground: oklch(0.98 0.01 75);
+  --muted: oklch(0.22 0.02 25);
+  --muted-foreground: oklch(0.65 0.01 25);
+  --border: oklch(0.98 0.01 75 / 0.1);
+  --input: oklch(0.98 0.01 75 / 0.12);
+  --glass: oklch(0.14 0.02 25 / 0.55);
+  --glass-strong: oklch(0.14 0.02 25 / 0.75);
+}
 
 @layer base {
   * { border-color: var(--color-border); }

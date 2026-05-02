@@ -26,9 +26,9 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "AURA.dj — AI Auto DJ Mixer" },
+      { title: "NARCOTICS.dj — AI Auto DJ Mixer" },
       { name: "description", content: "Premium AI DJ mixing studio. Upload tracks, get a seamless professional DJ mix in seconds." },
-      { property: "og:title", content: "AURA.dj — AI Auto DJ Mixer" },
+      { property: "og:title", content: "NARCOTICS.dj — AI Auto DJ Mixer" },
       { property: "og:description", content: "Upload tracks. Get a flawless DJ mix. Powered by AI." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -50,7 +50,7 @@ export const Route = createRootRoute({
 
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <head><HeadContent /></head>
       <body>{children}<Scripts /></body>
     </html>
@@ -66,7 +66,7 @@ function RootComponent() {
         <Outlet />
       </main>
       <footer className="px-4 sm:px-8 py-10 text-center text-xs text-muted-foreground">
-        © 2026 AURA.dj — Crafted for sound.
+        © 2026 NARCOTICS.dj — Crafted for sound.
       </footer>
     </>
   );

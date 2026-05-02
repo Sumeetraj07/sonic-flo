@@ -5,7 +5,7 @@ import { Sparkles, Waves, Zap, Music2, ArrowRight, Headphones, Disc3 } from "luc
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "AURA.dj — AI Auto DJ Mixer" },
+      { title: "NARCOTICS.dj — AI Auto DJ Mixer" },
       { name: "description", content: "Drop your tracks. AI builds a seamless professional DJ mix with BPM matching, harmonic transitions, and energy flow." },
     ],
   }),

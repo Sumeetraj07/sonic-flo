@@ -149,7 +149,7 @@ export async function analyzeFile(file: File): Promise<AnalyzedTrack> {
   };
 }
 
-export type MixMode = "Club" | "Chill" | "Festival" | "House Party" | "Lounge";
+export type MixMode = "Club" | "Chill" | "Festival" | "House Party" | "Lounge" | "Custom";
 
 const MODE_CROSSFADE: Record<MixMode, number> = {
   Club: 12,
@@ -157,10 +157,12 @@ const MODE_CROSSFADE: Record<MixMode, number> = {
   Festival: 8,
   "House Party": 10,
   Lounge: 22,
+  Custom: 10,
 };
 
 // Order tracks for best energy flow per mode
 export function orderTracks(tracks: AnalyzedTrack[], mode: MixMode): AnalyzedTrack[] {
+  if (mode === "Custom") return [...tracks];
   const sorted = [...tracks].sort((a, b) => a.energy - b.energy);
   switch (mode) {
     case "Festival":
@@ -186,6 +188,7 @@ export interface MixResult {
   duration: number;
   order: AnalyzedTrack[];
   crossfadeSec: number;
+  name?: string;
 }
 
 // Render mix offline with equal-power crossfades
@@ -198,36 +201,100 @@ export async function renderMix(
   const crossfade = MODE_CROSSFADE[mode];
   const sr = 44100;
 
-  const total = order.reduce((acc, t) => acc + t.duration, 0) - crossfade * (order.length - 1);
-  const offline = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
+  // Calculate DJ mix points (offset and play duration)
+  const mixPoints = order.map((t, i) => {
+    let offset = 0;
+    const isShortPreview = t.duration < 45;
+    
+    // For full songs, we skip the intro to find a drop.
+    // For 30s Apple Music previews, we start from the very beginning.
+    if (!isShortPreview) {
+      let startIndex = 0;
+      for (let j = 0; j < t.peaks.length * 0.4; j++) {
+        if (t.peaks[j] > 0.6) {
+          startIndex = j;
+          break;
+        }
+      }
+      offset = (startIndex / t.peaks.length) * t.duration;
+      
+      // Cap offset
+      if (i === 0) {
+        offset = Math.min(offset, 15); // Don't delay the first track too much
+      } else {
+        offset = Math.min(offset, t.duration * 0.33); // Start up to 1/3 in
+      }
+    }
+
+    // Dynamic crossfade: Short previews get a fast 5s transition so they play longer solo
+    const trackCrossfade = isShortPreview ? Math.min(5, crossfade) : crossfade;
+    const minDur = trackCrossfade + 8;
+    let playDur = isShortPreview ? t.duration : Math.min(90, t.duration - offset);
+    
+    if (t.duration < minDur) {
+      offset = 0;
+      playDur = t.duration;
+    } else if (playDur < minDur) {
+      offset = t.duration - minDur;
+      playDur = minDur;
+    }
+    
+    return { offset, playDur, trackCrossfade };
+  });
+
+  let totalLength = 0;
+  for (let i = 0; i < mixPoints.length; i++) {
+    totalLength += mixPoints[i].playDur;
+    if (i < mixPoints.length - 1) {
+      totalLength -= mixPoints[i].trackCrossfade;
+    }
+  }
+  
+  const totalSafe = Math.max(1, totalLength); // Ensure > 0
+  const offline = new OfflineAudioContext(2, Math.ceil(totalSafe * sr), sr);
 
   let cursor = 0;
   for (let i = 0; i < order.length; i++) {
     const t = order[i];
+    const { offset, playDur, trackCrossfade } = mixPoints[i];
+    
+    // The fade-in duration matches the PREVIOUS track's fade-out duration
+    const fadeInDur = i > 0 ? mixPoints[i-1].trackCrossfade : 0;
+
     const src = offline.createBufferSource();
     src.buffer = t.buffer;
     const gain = offline.createGain();
     src.connect(gain).connect(offline.destination);
 
     const startAt = cursor;
-    const dur = t.buffer.duration;
 
     // Fade in (except first)
     if (i > 0) {
       gain.gain.setValueAtTime(0, startAt);
-      gain.gain.linearRampToValueAtTime(1, startAt + crossfade);
+      gain.gain.linearRampToValueAtTime(1, startAt + fadeInDur);
     } else {
       gain.gain.setValueAtTime(1, startAt);
     }
-    // Fade out (except last)
+    
+    // Fade out
     if (i < order.length - 1) {
-      const fadeStart = startAt + dur - crossfade;
+      const fadeStart = startAt + playDur - trackCrossfade;
       gain.gain.setValueAtTime(1, fadeStart);
-      gain.gain.linearRampToValueAtTime(0, startAt + dur);
+      gain.gain.linearRampToValueAtTime(0, startAt + playDur);
+      
+      // Add professional DJ transition effect (Riser + Impact)
+      addDJTransition(offline, fadeStart, trackCrossfade);
+    } else {
+      // Final track: Add a 4s fade-out at the very end
+      const fadeStart = startAt + playDur - 4;
+      if (fadeStart > startAt) {
+        gain.gain.setValueAtTime(1, fadeStart);
+        gain.gain.linearRampToValueAtTime(0, startAt + playDur);
+      }
     }
 
-    src.start(startAt);
-    cursor += dur - crossfade;
+    src.start(startAt, offset, playDur);
+    cursor += playDur - trackCrossfade;
     onProgress?.((i + 1) / order.length * 0.4);
   }
 
@@ -237,7 +304,7 @@ export async function renderMix(
   const blob = new Blob([wav], { type: "audio/wav" });
   const url = URL.createObjectURL(blob);
   onProgress?.(1);
-  return { buffer: rendered, url, duration: rendered.duration, order, crossfadeSec: crossfade };
+  return { buffer: rendered, url, duration: rendered.duration, order, crossfadeSec: crossfade, name: `NARCOTICS.dj - ${mode} Set` };
 }
 
 // AudioBuffer -> WAV (PCM 16-bit)
@@ -281,4 +348,59 @@ export function fmtTime(s: number): string {
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
   return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+// Generate a synthetic "Riser" and "Impact Drop" to spice up transitions
+function addDJTransition(ctx: OfflineAudioContext, startTime: number, duration: number) {
+  if (duration <= 0) return;
+  const sr = ctx.sampleRate;
+
+  // --- 1. Riser (White Noise Sweep) ---
+  const riserDur = duration;
+  const riserFrames = sr * riserDur;
+  const riserBuffer = ctx.createBuffer(1, riserFrames, sr);
+  const rData = riserBuffer.getChannelData(0);
+  for (let i = 0; i < riserFrames; i++) {
+    rData[i] = (Math.random() * 2 - 1) * 0.4; 
+  }
+  const riserSrc = ctx.createBufferSource();
+  riserSrc.buffer = riserBuffer;
+
+  const riserFilter = ctx.createBiquadFilter();
+  riserFilter.type = "bandpass";
+  riserFilter.Q.value = 6; // Nice resonant whoosh
+  riserFilter.frequency.setValueAtTime(200, startTime);
+  riserFilter.frequency.exponentialRampToValueAtTime(6000, startTime + riserDur);
+
+  const riserGain = ctx.createGain();
+  riserGain.gain.setValueAtTime(0, startTime);
+  riserGain.gain.linearRampToValueAtTime(0.5, startTime + riserDur - 0.1);
+  riserGain.gain.linearRampToValueAtTime(0, startTime + riserDur);
+
+  riserSrc.connect(riserFilter).connect(riserGain).connect(ctx.destination);
+  riserSrc.start(startTime);
+
+  // --- 2. Impact Drop (Crash) ---
+  const impactTime = startTime + duration;
+  const impactDur = 2.0; // 2 seconds decay
+  const impactFrames = sr * impactDur;
+  const impactBuffer = ctx.createBuffer(1, impactFrames, sr);
+  const iData = impactBuffer.getChannelData(0);
+  for (let i = 0; i < impactFrames; i++) {
+    // Noise with exponential decay
+    iData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (sr * 0.3)); 
+  }
+  const impactSrc = ctx.createBufferSource();
+  impactSrc.buffer = impactBuffer;
+
+  const impactFilter = ctx.createBiquadFilter();
+  impactFilter.type = "lowpass";
+  impactFilter.frequency.value = 1500; // Muffled impact
+
+  const impactGain = ctx.createGain();
+  impactGain.gain.setValueAtTime(0.7, impactTime);
+  impactGain.gain.exponentialRampToValueAtTime(0.01, impactTime + impactDur);
+
+  impactSrc.connect(impactFilter).connect(impactGain).connect(ctx.destination);
+  impactSrc.start(impactTime);
 }

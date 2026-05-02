@@ -19,7 +19,7 @@ export function SiteHeader() {
             <Disc3 className="w-5 h-5 text-background animate-spin-slow" />
           </div>
           <div className="leading-tight">
-            <div className="font-display font-bold text-sm tracking-wide">AURA<span className="text-gradient-neon">.dj</span></div>
+            <div className="font-display font-bold text-sm tracking-wide">NARCOTICS<span className="text-gradient-neon">.dj</span></div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">AI Auto Mixer</div>
           </div>
         </Link>

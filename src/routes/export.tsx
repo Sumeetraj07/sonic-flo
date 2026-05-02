@@ -1,8 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
-import { Play, Pause, Download, Share2, RotateCcw, Check } from "lucide-react";
-import { useMixStore } from "../lib/mix-store";
+import { Play, Pause, Download, Share2, RotateCcw, Check, Trash2, History, Edit2 } from "lucide-react";
+import { useMixStore, mixStore } from "../lib/mix-store";
 import { fmtTime } from "../lib/audio-engine";
 import { Waveform } from "../components/Waveform";
 import { EmptyState } from "./analyze";
@@ -10,7 +10,7 @@ import { EmptyState } from "./analyze";
 export const Route = createFileRoute("/export")({
   head: () => ({
     meta: [
-      { title: "Export Mix — AURA.dj" },
+      { title: "Export Mix — NARCOTICS.dj" },
       { name: "description", content: "Preview and download your AI-generated DJ mix as WAV." },
     ],
   }),
@@ -18,12 +18,20 @@ export const Route = createFileRoute("/export")({
 });
 
 function ExportView() {
-  const { mix, mode } = useMixStore();
+  const { mix, mode, mixHistory } = useMixStore();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [copied, setCopied] = useState(false);
   const [peaks, setPeaks] = useState<number[]>([]);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [mixName, setMixName] = useState("");
+
+  useEffect(() => {
+    if (mix) {
+      setMixName(mix.name || `NARCOTICS.dj - ${mode} Set`);
+    }
+  }, [mix]);
 
   useEffect(() => {
     if (!mix) return;
@@ -60,14 +68,16 @@ function ExportView() {
   const handleDownload = () => {
     const a = document.createElement("a");
     a.href = mix.url;
-    a.download = `aura-dj-${mode.toLowerCase().replace(" ", "-")}-mix.wav`;
+    const name = mix.name || `NARCOTICS.dj - ${mode} Set`;
+    const filename = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    a.download = `${filename}.wav`;
     a.click();
   };
 
   const handleShare = async () => {
     try {
       if (navigator.share) {
-        await navigator.share({ title: "My AURA.dj mix", text: `Check out my ${mode} mix made with AURA.dj` });
+        await navigator.share({ title: "My NARCOTICS.dj mix", text: `Check out my ${mode} mix made with NARCOTICS.dj` });
       } else {
         await navigator.clipboard.writeText(window.location.origin);
         setCopied(true);
@@ -106,7 +116,38 @@ function ExportView() {
             </button>
             <div className="min-w-0 flex-1">
               <div className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Final Mix</div>
-              <div className="font-display text-2xl sm:text-3xl font-bold">AURA.dj — {mode} Set</div>
+              {isEditingName ? (
+                <input
+                  autoFocus
+                  type="text"
+                  value={mixName}
+                  onChange={(e) => setMixName(e.target.value)}
+                  onBlur={() => {
+                    setIsEditingName(false);
+                    const finalName = mixName.trim() || `NARCOTICS.dj - ${mode} Set`;
+                    setMixName(finalName);
+                    mixStore.renameMix(mix.url, finalName);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setIsEditingName(false);
+                      const finalName = mixName.trim() || `NARCOTICS.dj - ${mode} Set`;
+                      setMixName(finalName);
+                      mixStore.renameMix(mix.url, finalName);
+                    }
+                  }}
+                  className="font-display text-2xl sm:text-3xl font-bold bg-transparent border-b border-[var(--neon-cyan)] outline-none w-full text-foreground"
+                />
+              ) : (
+                <div 
+                  className="font-display text-2xl sm:text-3xl font-bold flex items-center gap-3 group cursor-pointer"
+                  onClick={() => setIsEditingName(true)}
+                  title="Click to rename"
+                >
+                  <span className="truncate">{mix.name || `NARCOTICS.dj - ${mode} Set`}</span>
+                  <Edit2 className="w-5 h-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+              )}
               <div className="mt-1 text-sm text-muted-foreground font-mono">
                 {fmtTime(time)} / {fmtTime(mix.duration)}
               </div>
@@ -155,6 +196,49 @@ function ExportView() {
             Crossfade: {mix.crossfadeSec}s · Format: 16-bit WAV @ 44.1kHz
           </p>
         </div>
+
+        {/* Mix History */}
+        {mixHistory && mixHistory.length > 0 && (
+          <div className="mt-16">
+            <h2 className="font-display text-xl font-semibold mb-4 flex items-center gap-2">
+              <History className="w-5 h-5 text-[var(--neon-cyan)]" /> Mix History
+            </h2>
+            <div className="grid sm:grid-cols-2 gap-4">
+              {mixHistory.map((m) => {
+                const isActive = mix.url === m.url;
+                return (
+                  <div 
+                    key={m.url} 
+                    className={`glass rounded-2xl p-5 relative border transition-colors ${isActive ? 'border-[var(--neon-cyan)]/50 bg-[var(--neon-cyan)]/5' : 'border-white/5 hover:border-white/20'}`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div 
+                        className="cursor-pointer flex-1"
+                        onClick={() => mixStore.loadMix(m)}
+                      >
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground mb-1">
+                          {isActive ? <span className="text-[var(--neon-cyan)]">Currently Viewing</span> : "Archived Mix"}
+                        </div>
+                        <div className="font-display font-semibold text-lg">{m.name || `NARCOTICS.dj - Set`}</div>
+                        <div className="text-sm text-[var(--neon-cyan)] mt-1">{m.order.length} Tracks — {fmtTime(m.duration)}</div>
+                        <div className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                          {m.order.map(t => t.name).join(", ")}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => mixStore.deleteMix(m.url)}
+                        className="text-muted-foreground hover:text-destructive p-2 -mr-2 -mt-2 transition-colors ml-2 shrink-0"
+                        title="Delete Mix"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
