@@ -2,14 +2,15 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { Activity, Zap, Music2, Volume2, Clock, ArrowRight, Sparkles } from "lucide-react";
 import { useMixStore } from "../lib/mix-store";
-import { fmtTime, type MixMode } from "../lib/audio-engine";
+import { fmtTime, orderTracks, type MixMode } from "../lib/audio-engine";
 import { mixStore } from "../lib/mix-store";
 import { Waveform } from "../components/Waveform";
+import { SongRecommendations } from "../components/SongRecommendations";
 
 export const Route = createFileRoute("/analyze")({
   head: () => ({
     meta: [
-      { title: "Track Analysis — NARCOTICS.dj" },
+      { title: "Track Intelligence — NARCOTICS.dj" },
       { name: "description", content: "AI intelligence for every track: BPM, key, energy, loudness, and recommended next track." },
     ],
   }),
@@ -27,6 +28,7 @@ const MODES: { id: MixMode; emoji: string; desc: string }[] = [
 function AnalyzeView() {
   const { tracks, mode } = useMixStore();
   const navigate = useNavigate();
+  const sorted = orderTracks(tracks, mode);
 
   if (tracks.length === 0) {
     return (
@@ -37,8 +39,6 @@ function AnalyzeView() {
       />
     );
   }
-
-  const sorted = [...tracks];
 
   return (
     <div className="px-4 sm:px-8 pt-10 pb-24">
@@ -89,6 +89,14 @@ function AnalyzeView() {
             })}
           </div>
         </div>
+
+        {/* AI Song Recommendations based on selected tracks */}
+        <SongRecommendations 
+          tracks={tracks}
+          title="Recommended Tracks for Your Set"
+          subtitle="Smart recommendations matching the vibe, artists, and tempo of your mix"
+          limit={6}
+        />
 
         {/* Track table */}
         <div className="mt-10 glass-strong rounded-3xl overflow-hidden">

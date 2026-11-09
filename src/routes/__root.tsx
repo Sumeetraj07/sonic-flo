@@ -1,4 +1,5 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+
 import appCss from "../styles.css?url";
 import { SiteHeader } from "../components/SiteHeader";
 import { AmbientBackground } from "../components/AmbientBackground";
@@ -71,3 +72,4 @@ function RootComponent() {
     </>
   );
 }
+

@@ -11,6 +11,7 @@ const NAV = [
 
 export function SiteHeader() {
   const loc = useLocation();
+
   return (
     <header className="sticky top-0 z-50 px-4 sm:px-8 pt-4">
       <div className="glass-strong mx-auto max-w-7xl rounded-2xl px-4 sm:px-6 py-3 flex items-center justify-between">
@@ -41,13 +42,17 @@ export function SiteHeader() {
             );
           })}
         </nav>
-        <a
-          href="#"
-          className="hidden sm:inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition"
-        >
-          <Github className="w-4 h-4" /> v1.0
-        </a>
+        
+        <div className="flex items-center gap-4">
+          <a
+            href="#"
+            className="hidden lg:inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition"
+          >
+            <Github className="w-4 h-4" /> v1.0
+          </a>
+        </div>
       </div>
     </header>
   );
 }
+

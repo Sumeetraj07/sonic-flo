@@ -4,12 +4,13 @@ import { useCallback, useRef, useState, useEffect } from "react";
 import { UploadCloud, X, Music, ArrowRight, Loader2, FileAudio, HardDrive, Music2, Info, ExternalLink, Pencil } from "lucide-react";
 import { mixStore, useMixStore } from "../lib/mix-store";
 import { analyzeFile } from "../lib/audio-engine";
+import { SongRecommendations } from "../components/SongRecommendations";
 
 export const Route = createFileRoute("/upload")({
   head: () => ({
     meta: [
       { title: "Upload Studio — NARCOTICS.dj" },
-      { name: "description", content: "Drop up to 20 audio tracks or import a Spotify / Apple Music playlist." },
+      { name: "description", content: "Drop up to 20 audio tracks or import an Apple Music playlist." },
     ],
   }),
   component: UploadStudio,
@@ -18,7 +19,7 @@ export const Route = createFileRoute("/upload")({
 const ACCEPT = [".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg"];
 const MAX = 80;
 
-type SourceTab = "files" | "spotify" | "apple";
+type SourceTab = "files" | "apple";
 
 function UploadStudio() {
   const { tracks } = useMixStore();
@@ -30,13 +31,12 @@ function UploadStudio() {
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
           <div className="text-xs uppercase tracking-[0.25em] text-primary">Step 01 — Upload</div>
           <h1 className="mt-2 font-display text-4xl sm:text-5xl font-bold">Bring your music in</h1>
-          <p className="mt-2 text-muted-foreground">Two ways to get started — upload your files or connect a streaming account.</p>
+          <p className="mt-2 text-muted-foreground">Two ways to get started — upload your files or search Apple Music previews.</p>
         </motion.div>
 
         {/* Source tabs */}
         <div className="mt-8 glass-strong rounded-2xl p-1.5 inline-flex flex-wrap gap-1">
           <TabBtn active={tab === "files"} onClick={() => setTab("files")} icon={<HardDrive className="w-4 h-4" />} label="Upload Files" />
-          <TabBtn active={tab === "spotify"} onClick={() => setTab("spotify")} icon={<SpotifyIcon />} label="Spotify" />
           <TabBtn active={tab === "apple"} onClick={() => setTab("apple")} icon={<AppleIcon />} label="Apple Music" />
         </div>
 
@@ -47,11 +47,7 @@ function UploadStudio() {
                 <FilesPanel />
               </motion.div>
             )}
-            {tab === "spotify" && (
-              <motion.div key="spotify" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                <SpotifyPanel />
-              </motion.div>
-            )}
+
             {tab === "apple" && (
               <motion.div key="apple" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
                 <ApplePanel />
@@ -199,182 +195,6 @@ function FilesPanel() {
   );
 }
 
-function SpotifyPanel() {
-  const { busy, progress, error, handleFiles } = useAudioUploader();
-  const [token, setToken] = useState<string | null>(() => sessionStorage.getItem("spotify_token"));
-  const [searchQuery, setSearchQuery] = useState("");
-  const [results, setResults] = useState<any[]>([]);
-  const [searching, setSearching] = useState(false);
-
-  useEffect(() => {
-    // Check if we are returning from an authorization code flow
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    
-    if (code) {
-      const codeVerifier = localStorage.getItem("code_verifier");
-      const clientId = "8c2880a85ae24f5abbfd30da94c87dd8";
-      const redirectUri = window.location.origin + "/upload";
-      
-      fetch("https://accounts.spotify.com/api/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: clientId,
-          grant_type: "authorization_code",
-          code: code,
-          redirect_uri: redirectUri,
-          code_verifier: codeVerifier || ""
-        })
-      })
-      .then(r => r.json())
-      .then(data => {
-        if (data.access_token) {
-          sessionStorage.setItem("spotify_token", data.access_token);
-          setToken(data.access_token);
-          window.history.replaceState(null, "", window.location.pathname);
-        } else {
-          console.error("Failed to get token:", data);
-        }
-      })
-      .catch(console.error);
-    } else {
-      // Check hash fallback just in case
-      const hash = window.location.hash;
-      if (hash && hash.includes("access_token")) {
-        const hashParams = new URLSearchParams(hash.substring(1));
-        const t = hashParams.get("access_token");
-        if (t) {
-          sessionStorage.setItem("spotify_token", t);
-          setToken(t);
-          window.history.replaceState(null, "", window.location.pathname);
-        }
-      }
-    }
-  }, []);
-
-  const login = async () => {
-    const clientId = "8c2880a85ae24f5abbfd30da94c87dd8";
-    const redirectUri = window.location.origin + "/upload";
-    
-    // Generate PKCE code verifier and challenge
-    const generateRandomString = (length: number) => {
-      const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-      const values = crypto.getRandomValues(new Uint8Array(length));
-      return Array.from(values).map(x => possible[x % possible.length]).join('');
-    };
-    
-    const codeVerifier = generateRandomString(64);
-    localStorage.setItem("code_verifier", codeVerifier);
-    
-    const encoder = new TextEncoder();
-    const data = encoder.encode(codeVerifier);
-    const hashed = await crypto.subtle.digest('SHA-256', data);
-    
-    const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(hashed)))
-      .replace(/=/g, '')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_');
-      
-    const authUrl = new URL("https://accounts.spotify.com/authorize");
-    authUrl.searchParams.append("client_id", clientId);
-    authUrl.searchParams.append("response_type", "code");
-    authUrl.searchParams.append("redirect_uri", redirectUri);
-    authUrl.searchParams.append("code_challenge_method", "S256");
-    authUrl.searchParams.append("code_challenge", codeChallenge);
-    
-    window.location.href = authUrl.toString();
-  };
-
-  const search = async () => {
-    if (!searchQuery || !token) return;
-    setSearching(true);
-    try {
-      const res = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(searchQuery)}&type=track&limit=20`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.status === 401) {
-        sessionStorage.removeItem("spotify_token");
-        setToken(null);
-      } else {
-        const data = await res.json();
-        setResults(data.tracks?.items || []);
-      }
-    } catch (e) { console.error(e); }
-    setSearching(false);
-  };
-
-  const addPreview = async (track: any) => {
-    if (!track.preview_url) return;
-    try {
-      const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(track.preview_url)}`);
-      const blob = await res.blob();
-      const file = new File([blob], `${track.name}.mp3`, { type: "audio/mpeg" });
-      await handleFiles([file]);
-    } catch (e) { alert("Failed to fetch preview."); }
-  };
-
-  return (
-    <div className="glass-strong rounded-3xl p-6 sm:p-10">
-      <div className="text-center mb-8">
-        <Music2 className="w-12 h-12 text-[var(--neon-lime)] mx-auto mb-4" />
-        <h3 className="font-display text-xl font-bold mb-2">Spotify Integration</h3>
-        {!token ? (
-          <>
-            <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-              Connect to search and import 30-second audio previews directly into your mix.
-            </p>
-            <button onClick={login} className="btn-neon bg-[var(--neon-lime)] text-white hover:bg-[var(--neon-lime)]/90 px-8 py-3 rounded-full font-semibold inline-flex items-center gap-2">
-              <ExternalLink className="w-4 h-4" /> Connect with Spotify
-            </button>
-          </>
-        ) : (
-          <div className="text-left">
-            <div className="flex gap-2 mb-6">
-              <input type="text" className="flex-1 bg-white/5 border border-white/10 rounded-full px-5 py-3 text-sm outline-none focus:border-[var(--neon-lime)] transition-colors" placeholder="Search for a song..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} />
-              <button onClick={search} disabled={searching} className="bg-[var(--neon-lime)] text-black px-6 py-3 rounded-full font-semibold text-sm hover:opacity-90 disabled:opacity-50 transition">{searching ? <Loader2 className="animate-spin w-4 h-4" /> : "Search"}</button>
-            </div>
-            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-              {results.map((t) => (
-                <div key={t.id} className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition">
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    {t.album?.images?.[0] && <img src={t.album.images[0].url} className="w-10 h-10 rounded-md object-cover" alt="Album art" />}
-                    <div className="min-w-0">
-                      <div className="font-semibold text-sm truncate">{t.name}</div>
-                      <div className="text-xs text-muted-foreground truncate">{t.artists?.map((a: any) => a.name).join(", ")}</div>
-                    </div>
-                  </div>
-                  <button onClick={() => addPreview(t)} disabled={!t.preview_url || busy} className="ml-3 shrink-0 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-full text-xs font-semibold transition" title={!t.preview_url ? "No audio preview available from Spotify" : "Add to mix"}>{!t.preview_url ? "No Audio" : "Add"}</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-      <div className="mt-8 pt-8 border-t border-white/10 text-center">
-        <h4 className="font-semibold mb-3 text-sm">Have full downloaded tracks?</h4>
-        <p className="text-xs text-muted-foreground mb-5">If you used a third-party tool to download full Spotify tracks, upload them here to bypass the 30-second preview limit.</p>
-        <label className="cursor-pointer inline-flex items-center gap-2 bg-primary text-primary-foreground px-6 py-3 rounded-full text-sm font-semibold hover:opacity-90 transition">
-          <UploadCloud className="w-4 h-4" /> Browse Files
-          <input type="file" multiple accept=".mp3,.wav,.flac,.m4a" onChange={(e) => e.target.files && handleFiles(e.target.files)} className="hidden" />
-        </label>
-      </div>
-      {error && <div className="mt-4 glass rounded-xl px-4 py-3 text-sm text-destructive border-destructive/30">{error}</div>}
-      
-      {progress && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 glass rounded-xl p-4">
-          <div className="flex items-center gap-3 text-sm">
-            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-            <span className="truncate">Analyzing <span className="text-foreground font-medium">{progress.name}</span>…</span>
-          </div>
-          <div className="mt-3 h-1.5 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-primary to-accent transition-all" style={{ width: `${progress.pct}%` }} />
-          </div>
-        </motion.div>
-      )}
-    </div>
-  );
-}
 
 function ApplePanel() {
   const { busy, progress, error, handleFiles } = useAudioUploader();
@@ -382,6 +202,7 @@ function ApplePanel() {
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
 
+  // Button / Enter-key search — same logic as original
   const search = async () => {
     if (!searchQuery) return;
     setSearching(true);
@@ -393,6 +214,7 @@ function ApplePanel() {
     setSearching(false);
   };
 
+  // Preview import — identical to original
   const addPreview = async (track: any) => {
     if (!track.previewUrl) return;
     try {
@@ -405,17 +227,15 @@ function ApplePanel() {
         // Fallback to allorigins raw proxy
         res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(track.previewUrl)}`);
       }
-      
       const blob = await res.blob();
       if (blob.type.includes("text/html")) {
-         throw new Error("Proxy returned an HTML page instead of an audio file.");
+        throw new Error("Proxy returned an HTML page instead of an audio file.");
       }
-      
       const file = new File([blob], `${track.trackName} - ${track.artistName}.m4a`, { type: "audio/mp4" });
       await handleFiles([file]);
-    } catch (e) { 
+    } catch (e) {
       console.error(e);
-      alert("Failed to fetch preview. The connection was blocked."); 
+      alert("Failed to fetch preview. The connection was blocked.");
     }
   };
 
@@ -430,24 +250,17 @@ function ApplePanel() {
           Instantly search and import 30-second high-quality audio previews directly into your mix. No login required.
         </p>
         <div className="text-left">
-          <div className="flex gap-2 mb-6">
-            <input type="text" className="flex-1 bg-white/5 border border-white/10 rounded-full px-5 py-3 text-sm outline-none focus:border-[oklch(0.62_0.22_0)] transition-colors" placeholder="Search for a song or artist..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} />
-            <button onClick={search} disabled={searching} className="bg-[oklch(0.62_0.22_0)] text-white px-6 py-3 rounded-full font-semibold text-sm hover:opacity-90 disabled:opacity-50 transition">{searching ? <Loader2 className="animate-spin w-4 h-4" /> : "Search"}</button>
-          </div>
-          <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-            {results.map((t) => (
-              <div key={t.trackId} className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition">
-                <div className="flex items-center gap-3 overflow-hidden">
-                  {t.artworkUrl100 && <img src={t.artworkUrl100} className="w-10 h-10 rounded-md object-cover" alt="Album art" />}
-                  <div className="min-w-0">
-                    <div className="font-semibold text-sm truncate">{t.trackName}</div>
-                    <div className="text-xs text-muted-foreground truncate">{t.artistName}</div>
-                  </div>
-                </div>
-                <button onClick={() => addPreview(t)} disabled={!t.previewUrl || busy} className="ml-3 shrink-0 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-full text-xs font-semibold transition" title={!t.previewUrl ? "No preview available" : "Add to mix"}>{!t.previewUrl ? "No Audio" : "Add"}</button>
-              </div>
-            ))}
-          </div>
+          <AppleSearchBox
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            results={results}
+            setResults={setResults}
+            searching={searching}
+            setSearching={setSearching}
+            onSearch={search}
+            onAdd={addPreview}
+            busy={busy}
+          />
         </div>
       </div>
       <div className="mt-8 pt-8 border-t border-white/10 text-center">
@@ -473,6 +286,189 @@ function ApplePanel() {
     </div>
   );
 }
+
+// ── Live debounced search box for Apple Music ─────────────────────────────────
+function AppleSearchBox({
+  searchQuery, setSearchQuery,
+  results, setResults,
+  searching, setSearching,
+  onSearch, onAdd, busy,
+}: {
+  searchQuery: string;
+  setSearchQuery: (v: string) => void;
+  results: any[];
+  setResults: (v: any[]) => void;
+  searching: boolean;
+  setSearching: (v: boolean) => void;
+  onSearch: () => void;
+  onAdd: (track: any) => void;
+  busy: boolean;
+}) {
+  const [showDropdown, setShowDropdown] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestIdRef = useRef(0);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Debounced live search — 400 ms after user stops typing
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    const q = searchQuery.trim();
+    if (!q || q.length < 2) {
+      setResults([]);
+      setShowDropdown(false);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      const thisId = ++requestIdRef.current;
+      setSearching(true);
+      try {
+        const res = await fetch(
+          `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=20`
+        );
+        const data = await res.json();
+        // Discard stale responses if a newer request has fired
+        if (thisId === requestIdRef.current) {
+          setResults(data.results || []);
+          setShowDropdown(true);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (thisId === requestIdRef.current) setSearching(false);
+      }
+    }, 400);
+
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [searchQuery]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const handleSelect = (track: any) => {
+    setShowDropdown(false);
+    onAdd(track);
+  };
+
+  const handleSearchBtn = () => {
+    setShowDropdown(true);
+    onSearch();
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      {/* Input + Search button — same classes as original */}
+      <div className="flex gap-2 mb-2">
+        <input
+          type="text"
+          className="flex-1 bg-white/5 border border-white/10 rounded-full px-5 py-3 text-sm outline-none focus:border-[oklch(0.62_0.22_0)] transition-colors"
+          placeholder="Search for a song or artist..."
+          value={searchQuery}
+          onChange={(e) => {
+            setSearchQuery(e.target.value);
+            if (!e.target.value.trim()) { setShowDropdown(false); setResults([]); }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSearchBtn();
+            if (e.key === "Escape") setShowDropdown(false);
+          }}
+          onFocus={() => { if (results.length > 0) setShowDropdown(true); }}
+        />
+        <button
+          onClick={handleSearchBtn}
+          disabled={searching}
+          className="bg-[oklch(0.62_0.22_0)] text-white px-6 py-3 rounded-full font-semibold text-sm hover:opacity-90 disabled:opacity-50 transition"
+        >
+          {searching ? <Loader2 className="animate-spin w-4 h-4" /> : "Search"}
+        </button>
+      </div>
+
+      {/* Live dropdown — appears while typing */}
+      <AnimatePresence>
+        {showDropdown && (
+          <motion.div
+            key="apple-dropdown"
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.15 }}
+            className="absolute left-0 right-0 z-50 mt-1 glass-strong border border-white/10 rounded-2xl overflow-hidden shadow-2xl"
+          >
+            {searching ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Searching…
+              </div>
+            ) : results.length === 0 ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">No results found</div>
+            ) : (
+              <div className="max-h-[320px] overflow-y-auto custom-scrollbar divide-y divide-white/5">
+                {results.map((t) => (
+                  <div key={t.trackId} className="flex items-center justify-between px-4 py-3 hover:bg-white/10 transition">
+                    <div className="flex items-center gap-3 overflow-hidden min-w-0">
+                      {t.artworkUrl100 && (
+                        <img src={t.artworkUrl100} className="w-10 h-10 rounded-lg object-cover shrink-0" alt="Album art" />
+                      )}
+                      <div className="min-w-0">
+                        <div className="font-semibold text-sm truncate">{t.trackName}</div>
+                        <div className="text-xs text-muted-foreground truncate">{t.artistName}</div>
+                        {t.collectionName && (
+                          <div className="text-[10px] text-muted-foreground/60 truncate">{t.collectionName}</div>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleSelect(t)}
+                      disabled={!t.previewUrl || busy}
+                      className="ml-3 shrink-0 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-full text-xs font-semibold transition"
+                      title={!t.previewUrl ? "No preview available" : "Add to mix"}
+                    >
+                      {!t.previewUrl ? "No Audio" : "Add"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Persistent list below input when dropdown is closed — matches original layout */}
+      {!showDropdown && results.length > 0 && (
+        <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar mt-4">
+          {results.map((t) => (
+            <div key={t.trackId} className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition">
+              <div className="flex items-center gap-3 overflow-hidden">
+                {t.artworkUrl100 && <img src={t.artworkUrl100} className="w-10 h-10 rounded-md object-cover" alt="Album art" />}
+                <div className="min-w-0">
+                  <div className="font-semibold text-sm truncate">{t.trackName}</div>
+                  <div className="text-xs text-muted-foreground truncate">{t.artistName}</div>
+                </div>
+              </div>
+              <button
+                onClick={() => onAdd(t)}
+                disabled={!t.previewUrl || busy}
+                className="ml-3 shrink-0 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-full text-xs font-semibold transition"
+                title={!t.previewUrl ? "No preview available" : "Add to mix"}
+              >
+                {!t.previewUrl ? "No Audio" : "Add"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function Queue() {
   const { tracks } = useMixStore();
@@ -557,6 +553,9 @@ function Queue() {
         </AnimatePresence>
       </div>
 
+      
+      <SongRecommendations tracks={tracks} title="Recommended For Your Mix" subtitle="Based on songs currently in your queue" limit={6} />
+
       <div className="mt-8 flex flex-col sm:flex-row gap-3 sm:items-center justify-between glass-strong rounded-2xl p-5">
         <div className="flex items-center gap-3">
           <Music className="w-5 h-5 text-primary" />
@@ -580,14 +579,7 @@ function Queue() {
   );
 }
 
-function SpotifyIcon({ large = false }: { large?: boolean }) {
-  const s = large ? 28 : 16;
-  return (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12C24 5.4 18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.78-.179-.9-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.302 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.42 1.56-.301.421-1.021.599-1.561.3z"/>
-    </svg>
-  );
-}
+
 
 function AppleIcon({ large = false }: { large?: boolean }) {
   const s = large ? 28 : 16;

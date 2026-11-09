@@ -1,6 +1,12 @@
 // Client-side audio analysis & mixing engine using Web Audio API.
 // Real BPM estimation via energy autocorrelation, RMS energy, peak loudness,
-// and a real crossfade mixer that produces a downloadable WAV.
+// and a real crossfade mixer that produces a downloadable WAV with genre-specific mastering.
+
+export interface MixEQ {
+  bass: number;
+  mid: number;
+  high: number;
+}
 
 export interface AnalyzedTrack {
   id: string;
@@ -15,6 +21,7 @@ export interface AnalyzedTrack {
   buffer: AudioBuffer;
   url: string;
   peaks: number[];      // ~200 normalized peaks for waveform
+  eq?: MixEQ;
 }
 
 const KEYS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -146,19 +153,85 @@ export async function analyzeFile(file: File): Promise<AnalyzedTrack> {
     buffer,
     url: URL.createObjectURL(file),
     peaks,
+    eq: { bass: 0, mid: 0, high: 0 },
   };
 }
 
 export type MixMode = "Club" | "Chill" | "Festival" | "House Party" | "Lounge" | "Custom";
 
-const MODE_CROSSFADE: Record<MixMode, number> = {
-  Club: 12,
-  Chill: 18,
-  Festival: 8,
-  "House Party": 10,
-  Lounge: 22,
-  Custom: 10,
+export interface ModeProfile {
+  eq: MixEQ;
+  frequencies: { bass: number; mid: number; high: number };
+  crossfade: number;
+  compressor: {
+    threshold: number;
+    knee: number;
+    ratio: number;
+    attack: number;
+    release: number;
+  };
+  transitionStyle: "club" | "festival" | "party" | "chill" | "lounge" | "standard";
+}
+
+export const MODE_PROFILES: Record<MixMode, ModeProfile> = {
+  Club: {
+    eq: { bass: 5.5, mid: -1.8, high: 3.2 },
+    frequencies: { bass: 90, mid: 400, high: 8000 },
+    crossfade: 10,
+    compressor: { threshold: -18, knee: 10, ratio: 4.5, attack: 0.005, release: 0.12 },
+    transitionStyle: "club",
+  },
+  Festival: {
+    eq: { bass: 6.8, mid: 3.2, high: 5.5 },
+    frequencies: { bass: 75, mid: 3200, high: 10000 },
+    crossfade: 8,
+    compressor: { threshold: -14, knee: 8, ratio: 6.0, attack: 0.003, release: 0.20 },
+    transitionStyle: "festival",
+  },
+  "House Party": {
+    eq: { bass: 4.0, mid: 2.2, high: 2.0 },
+    frequencies: { bass: 120, mid: 1800, high: 7000 },
+    crossfade: 10,
+    compressor: { threshold: -16, knee: 14, ratio: 3.2, attack: 0.010, release: 0.18 },
+    transitionStyle: "party",
+  },
+  Chill: {
+    eq: { bass: 2.0, mid: 1.0, high: -4.8 },
+    frequencies: { bass: 140, mid: 850, high: 4500 },
+    crossfade: 16,
+    compressor: { threshold: -22, knee: 24, ratio: 2.0, attack: 0.040, release: 0.40 },
+    transitionStyle: "chill",
+  },
+  Lounge: {
+    eq: { bass: 1.0, mid: 1.8, high: -5.5 },
+    frequencies: { bass: 250, mid: 1200, high: 6000 },
+    crossfade: 20,
+    compressor: { threshold: -24, knee: 28, ratio: 1.8, attack: 0.050, release: 0.50 },
+    transitionStyle: "lounge",
+  },
+  Custom: {
+    eq: { bass: 0, mid: 0, high: 0 },
+    frequencies: { bass: 200, mid: 1000, high: 4000 },
+    crossfade: 10,
+    compressor: { threshold: -18, knee: 16, ratio: 2.5, attack: 0.020, release: 0.25 },
+    transitionStyle: "standard",
+  },
 };
+
+export function sliderToDb(value: number): number {
+  if (!isFinite(value)) return 0;
+  return value < 0 ? value * 24 : value * 8;
+}
+
+export function getMixEQ(mode: MixMode, controls?: MixEQ): MixEQ {
+  const profile = MODE_PROFILES[mode]?.eq || { bass: 0, mid: 0, high: 0 };
+  const user = controls || { bass: 0, mid: 0, high: 0 };
+  return {
+    bass: profile.bass + sliderToDb(user.bass),
+    mid: profile.mid + sliderToDb(user.mid),
+    high: profile.high + sliderToDb(user.high),
+  };
+}
 
 // Order tracks for best energy flow per mode
 export function orderTracks(tracks: AnalyzedTrack[], mode: MixMode): AnalyzedTrack[] {
@@ -191,23 +264,30 @@ export interface MixResult {
   name?: string;
 }
 
-// Render mix offline with equal-power crossfades
+// Render mix offline with equal-power crossfades, genre-specific audio processing, and per-track EQ
 export async function renderMix(
   tracks: AnalyzedTrack[],
   mode: MixMode,
-  onProgress?: (p: number) => void
+  onProgress?: (p: number) => void,
+  trackEQInput?: Record<string, MixEQ> | MixEQ
 ): Promise<MixResult> {
   const order = orderTracks(tracks, mode);
-  const crossfade = MODE_CROSSFADE[mode];
+  const profile = MODE_PROFILES[mode] || MODE_PROFILES.Club;
+  const crossfade = profile.crossfade;
   const sr = 44100;
+
+  // Normalize track EQ input (supports both per-track map or single global EQ object)
+  const isSingleEQ = trackEQInput && typeof (trackEQInput as any).bass === "number";
+  const trackEQMap: Record<string, MixEQ> = isSingleEQ
+    ? {}
+    : ((trackEQInput as Record<string, MixEQ>) || {});
 
   // Calculate DJ mix points (offset and play duration)
   const mixPoints = order.map((t, i) => {
     let offset = 0;
     const isShortPreview = t.duration < 45;
     
-    // For full songs, we skip the intro to find a drop.
-    // For 30s Apple Music previews, we start from the very beginning.
+    // For full songs, skip intro to find energy drop. For short previews, start from beginning.
     if (!isShortPreview) {
       let startIndex = 0;
       for (let j = 0; j < t.peaks.length * 0.4; j++) {
@@ -220,13 +300,13 @@ export async function renderMix(
       
       // Cap offset
       if (i === 0) {
-        offset = Math.min(offset, 15); // Don't delay the first track too much
+        offset = Math.min(offset, 15);
       } else {
-        offset = Math.min(offset, t.duration * 0.33); // Start up to 1/3 in
+        offset = Math.min(offset, t.duration * 0.33);
       }
     }
 
-    // Dynamic crossfade: Short previews get a fast 5s transition so they play longer solo
+    // Dynamic crossfade: Short previews get a fast 5s transition
     const trackCrossfade = isShortPreview ? Math.min(5, crossfade) : crossfade;
     const minDur = trackCrossfade + 8;
     let playDur = isShortPreview ? t.duration : Math.min(90, t.duration - offset);
@@ -250,25 +330,69 @@ export async function renderMix(
     }
   }
   
-  const totalSafe = Math.max(1, totalLength); // Ensure > 0
+  const totalSafe = Math.max(1, totalLength);
   const offline = new OfflineAudioContext(2, Math.ceil(totalSafe * sr), sr);
+
+  // Master bus compressor for genre-specific punch and dynamics
+  const masterCompressor = offline.createDynamicsCompressor();
+  masterCompressor.threshold.value = profile.compressor.threshold;
+  masterCompressor.knee.value = profile.compressor.knee;
+  masterCompressor.ratio.value = profile.compressor.ratio;
+  masterCompressor.attack.value = profile.compressor.attack;
+  masterCompressor.release.value = profile.compressor.release;
+  masterCompressor.connect(offline.destination);
 
   let cursor = 0;
   for (let i = 0; i < order.length; i++) {
     const t = order[i];
     const { offset, playDur, trackCrossfade } = mixPoints[i];
     
-    // The fade-in duration matches the PREVIOUS track's fade-out duration
-    const fadeInDur = i > 0 ? mixPoints[i-1].trackCrossfade : 0;
+    // Per-track user EQ adjustments
+    const userTrackEQ: MixEQ = isSingleEQ
+      ? (trackEQInput as MixEQ)
+      : (trackEQMap[t.id] || t.eq || { bass: 0, mid: 0, high: 0 });
+    const trackMixEQ = getMixEQ(mode, userTrackEQ);
+
+    const fadeInDur = i > 0 ? mixPoints[i - 1].trackCrossfade : 0;
 
     const src = offline.createBufferSource();
     src.buffer = t.buffer;
+
+    // 3-Band Parametric EQ tailored to genre frequencies and individual track settings
+    const bassFilter = offline.createBiquadFilter();
+    bassFilter.type = "lowshelf";
+    bassFilter.frequency.value = profile.frequencies.bass;
+    bassFilter.gain.value = trackMixEQ.bass;
+
+    const midFilter = offline.createBiquadFilter();
+    midFilter.type = "peaking";
+    midFilter.frequency.value = profile.frequencies.mid;
+    midFilter.Q.value = 1.0;
+    midFilter.gain.value = trackMixEQ.mid;
+
+    const highFilter = offline.createBiquadFilter();
+    highFilter.type = "highshelf";
+    highFilter.frequency.value = profile.frequencies.high;
+    highFilter.gain.value = trackMixEQ.high;
+
+    // DJ Highpass filter for Club / Festival transition bass-kill effect
+    const djFilter = offline.createBiquadFilter();
+    djFilter.type = "highpass";
+    djFilter.frequency.value = 20; // Transparent during normal play
+
     const gain = offline.createGain();
-    src.connect(gain).connect(offline.destination);
+
+    // Signal chain: Source -> EQ (Bass, Mid, High) -> DJ Filter -> Gain -> Master Compressor
+    src.connect(bassFilter);
+    bassFilter.connect(midFilter);
+    midFilter.connect(highFilter);
+    highFilter.connect(djFilter);
+    djFilter.connect(gain);
+    gain.connect(masterCompressor);
 
     const startAt = cursor;
 
-    // Fade in (except first)
+    // Fade in
     if (i > 0) {
       gain.gain.setValueAtTime(0, startAt);
       gain.gain.linearRampToValueAtTime(1, startAt + fadeInDur);
@@ -276,16 +400,23 @@ export async function renderMix(
       gain.gain.setValueAtTime(1, startAt);
     }
     
-    // Fade out
+    // Fade out & DJ transition
     if (i < order.length - 1) {
       const fadeStart = startAt + playDur - trackCrossfade;
       gain.gain.setValueAtTime(1, fadeStart);
       gain.gain.linearRampToValueAtTime(0, startAt + playDur);
       
-      // Add professional DJ transition effect (Riser + Impact)
-      addDJTransition(offline, fadeStart, trackCrossfade);
+      // Pro Club/Festival transition: filter out low end before the drop
+      if (mode === "Club" || mode === "Festival") {
+        const sweepStart = Math.max(fadeStart, startAt + playDur - 4);
+        djFilter.frequency.setValueAtTime(20, sweepStart);
+        djFilter.frequency.exponentialRampToValueAtTime(1000, startAt + playDur);
+      }
+
+      // Add genre-authentic DJ transition effect
+      addDJTransition(offline, fadeStart, trackCrossfade, mode);
     } else {
-      // Final track: Add a 4s fade-out at the very end
+      // Final track: gentle fade-out at end
       const fadeStart = startAt + playDur - 4;
       if (fadeStart > startAt) {
         gain.gain.setValueAtTime(1, fadeStart);
@@ -350,55 +481,147 @@ export function fmtTime(s: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
-// Generate a synthetic "Riser" and "Impact Drop" to spice up transitions
-function addDJTransition(ctx: OfflineAudioContext, startTime: number, duration: number) {
+// Generate genre-authentic DJ transitions
+function addDJTransition(
+  ctx: OfflineAudioContext,
+  startTime: number,
+  duration: number,
+  mode: MixMode
+) {
   if (duration <= 0) return;
   const sr = ctx.sampleRate;
 
-  // --- 1. Riser (White Noise Sweep) ---
-  const riserDur = duration;
-  const riserFrames = sr * riserDur;
+  // 1. Chill & Lounge: soft ambient texture, zero abrasive noise or crash explosions
+  if (mode === "Chill" || mode === "Lounge") {
+    const sweepDur = Math.min(duration, 8);
+    const sweepFrames = Math.floor(sr * sweepDur);
+    const buffer = ctx.createBuffer(1, sweepFrames, sr);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < sweepFrames; i++) {
+      data[i] = (Math.random() * 2 - 1) * 0.15;
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.Q.value = 2.5;
+    filter.frequency.setValueAtTime(300, startTime);
+    filter.frequency.exponentialRampToValueAtTime(1800, startTime + sweepDur);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(mode === "Chill" ? 0.2 : 0.12, startTime + sweepDur * 0.5);
+    gain.gain.linearRampToValueAtTime(0, startTime + sweepDur);
+
+    src.connect(filter).connect(gain).connect(ctx.destination);
+    src.start(startTime);
+    return;
+  }
+
+  // 2. Festival: Stadium epic pitch-rising riser sweep + 50Hz sub-drop boom + wide crash
+  if (mode === "Festival") {
+    const riserDur = duration;
+    const riserFrames = Math.floor(sr * riserDur);
+    const riserBuffer = ctx.createBuffer(1, riserFrames, sr);
+    const rData = riserBuffer.getChannelData(0);
+    for (let i = 0; i < riserFrames; i++) {
+      rData[i] = (Math.random() * 2 - 1) * 0.5;
+    }
+    const riserSrc = ctx.createBufferSource();
+    riserSrc.buffer = riserBuffer;
+
+    const riserFilter = ctx.createBiquadFilter();
+    riserFilter.type = "bandpass";
+    riserFilter.Q.value = 7.0; // High resonance scream
+    riserFilter.frequency.setValueAtTime(150, startTime);
+    riserFilter.frequency.exponentialRampToValueAtTime(8000, startTime + riserDur);
+
+    const riserGain = ctx.createGain();
+    riserGain.gain.setValueAtTime(0, startTime);
+    riserGain.gain.linearRampToValueAtTime(0.6, startTime + riserDur - 0.1);
+    riserGain.gain.linearRampToValueAtTime(0, startTime + riserDur);
+
+    riserSrc.connect(riserFilter).connect(riserGain).connect(ctx.destination);
+    riserSrc.start(startTime);
+
+    // Festival Sub Boom Impact at drop point
+    const dropTime = startTime + duration;
+    const osc = ctx.createOscillator();
+    const oscGain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(90, dropTime);
+    osc.frequency.exponentialRampToValueAtTime(40, dropTime + 0.8);
+    oscGain.gain.setValueAtTime(0.7, dropTime);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, dropTime + 1.2);
+    osc.connect(oscGain).connect(ctx.destination);
+    osc.start(dropTime);
+    osc.stop(dropTime + 1.2);
+
+    // Festival Crash
+    const crashDur = 2.5;
+    const crashFrames = Math.floor(sr * crashDur);
+    const crashBuffer = ctx.createBuffer(1, crashFrames, sr);
+    const cData = crashBuffer.getChannelData(0);
+    for (let i = 0; i < crashFrames; i++) {
+      cData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (sr * 0.45));
+    }
+    const crashSrc = ctx.createBufferSource();
+    crashSrc.buffer = crashBuffer;
+    const crashFilter = ctx.createBiquadFilter();
+    crashFilter.type = "highpass";
+    crashFilter.frequency.value = 2500;
+    const crashGain = ctx.createGain();
+    crashGain.gain.setValueAtTime(0.65, dropTime);
+    crashGain.gain.exponentialRampToValueAtTime(0.01, dropTime + crashDur);
+    crashSrc.connect(crashFilter).connect(crashGain).connect(ctx.destination);
+    crashSrc.start(dropTime);
+    return;
+  }
+
+  // 3. Club / House Party / Custom: Energetic dance build with punchy beat drop
+  const riserDur = Math.min(duration, 6);
+  const riserFrames = Math.floor(sr * riserDur);
   const riserBuffer = ctx.createBuffer(1, riserFrames, sr);
   const rData = riserBuffer.getChannelData(0);
   for (let i = 0; i < riserFrames; i++) {
-    rData[i] = (Math.random() * 2 - 1) * 0.4; 
+    rData[i] = (Math.random() * 2 - 1) * 0.35;
   }
   const riserSrc = ctx.createBufferSource();
   riserSrc.buffer = riserBuffer;
 
   const riserFilter = ctx.createBiquadFilter();
   riserFilter.type = "bandpass";
-  riserFilter.Q.value = 6; // Nice resonant whoosh
-  riserFilter.frequency.setValueAtTime(200, startTime);
-  riserFilter.frequency.exponentialRampToValueAtTime(6000, startTime + riserDur);
+  riserFilter.Q.value = 5.0;
+  riserFilter.frequency.setValueAtTime(250, startTime);
+  riserFilter.frequency.exponentialRampToValueAtTime(5500, startTime + riserDur);
 
   const riserGain = ctx.createGain();
   riserGain.gain.setValueAtTime(0, startTime);
-  riserGain.gain.linearRampToValueAtTime(0.5, startTime + riserDur - 0.1);
+  riserGain.gain.linearRampToValueAtTime(0.45, startTime + riserDur - 0.1);
   riserGain.gain.linearRampToValueAtTime(0, startTime + riserDur);
 
   riserSrc.connect(riserFilter).connect(riserGain).connect(ctx.destination);
   riserSrc.start(startTime);
 
-  // --- 2. Impact Drop (Crash) ---
+  // Club Kick Impact Drop
   const impactTime = startTime + duration;
-  const impactDur = 2.0; // 2 seconds decay
-  const impactFrames = sr * impactDur;
+  const impactDur = 1.4;
+  const impactFrames = Math.floor(sr * impactDur);
   const impactBuffer = ctx.createBuffer(1, impactFrames, sr);
   const iData = impactBuffer.getChannelData(0);
   for (let i = 0; i < impactFrames; i++) {
-    // Noise with exponential decay
-    iData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (sr * 0.3)); 
+    iData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (sr * 0.25));
   }
   const impactSrc = ctx.createBufferSource();
   impactSrc.buffer = impactBuffer;
 
   const impactFilter = ctx.createBiquadFilter();
   impactFilter.type = "lowpass";
-  impactFilter.frequency.value = 1500; // Muffled impact
+  impactFilter.frequency.value = 1600;
 
   const impactGain = ctx.createGain();
-  impactGain.gain.setValueAtTime(0.7, impactTime);
+  impactGain.gain.setValueAtTime(0.55, impactTime);
   impactGain.gain.exponentialRampToValueAtTime(0.01, impactTime + impactDur);
 
   impactSrc.connect(impactFilter).connect(impactGain).connect(ctx.destination);

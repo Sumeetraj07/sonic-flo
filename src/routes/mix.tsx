@@ -1,9 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect, useRef } from "react";
-import { Disc3, Sparkles, Loader2, ArrowRight, Wand2, Play, Pause, ChevronUp, ChevronDown } from "lucide-react";
+import { Disc3, Sparkles, Loader2, ArrowRight, Wand2, Play, Pause, ChevronUp, ChevronDown, Sliders, RotateCcw, Copy } from "lucide-react";
 import { useMixStore, mixStore } from "../lib/mix-store";
-import { renderMix, orderTracks, fmtTime } from "../lib/audio-engine";
+import { renderMix, orderTracks, fmtTime, getMixEQ, type MixEQ, type MixMode } from "../lib/audio-engine";
 import { Waveform } from "../components/Waveform";
 import { EmptyState } from "./analyze";
 
@@ -33,7 +33,8 @@ export const Route = createFileRoute("/mix")({
 });
 
 function useAudioPreview(
-  eq: { bass: number; mid: number; high: number },
+  trackEQs: Record<string, MixEQ>,
+  mode: MixMode,
   crossfader: number,
   deckAId?: string,
   deckBId?: string
@@ -51,16 +52,17 @@ function useAudioPreview(
   const [audioData, setAudioData] = useState<Uint8Array>(new Uint8Array(0));
   const rafRef = useRef<number>(0);
 
-  // Apply EQ
+  // Apply track-specific EQ in real time
   useEffect(() => {
-    if (bassFilterRef.current && audioCtxRef.current) {
-      const mapEq = (v: number) => (v < 0 ? v * 24 : v * 6);
+    if (bassFilterRef.current && midFilterRef.current && highFilterRef.current && audioCtxRef.current && playingId) {
+      const currentTrackEQ = trackEQs[playingId] || { bass: 0, mid: 0, high: 0 };
+      const mixEQ = getMixEQ(mode, currentTrackEQ);
       const time = audioCtxRef.current.currentTime;
-      bassFilterRef.current.gain.setTargetAtTime(mapEq(eq.bass), time, 0.05);
-      midFilterRef.current!.gain.setTargetAtTime(mapEq(eq.mid), time, 0.05);
-      highFilterRef.current!.gain.setTargetAtTime(mapEq(eq.high), time, 0.05);
+      bassFilterRef.current.gain.setTargetAtTime(mixEQ.bass, time, 0.05);
+      midFilterRef.current.gain.setTargetAtTime(mixEQ.mid, time, 0.05);
+      highFilterRef.current.gain.setTargetAtTime(mixEQ.high, time, 0.05);
     }
-  }, [eq]);
+  }, [trackEQs, mode, playingId]);
 
   // Apply Crossfader
   useEffect(() => {
@@ -129,11 +131,12 @@ function useAudioPreview(
       source.connect(bassFilterRef.current!);
       sourceRef.current = source;
       
-      // Initialize states for new play
-      const mapEq = (v: number) => (v < 0 ? v * 24 : v * 6);
-      bassFilterRef.current!.gain.value = mapEq(eq.bass);
-      midFilterRef.current!.gain.value = mapEq(eq.mid);
-      highFilterRef.current!.gain.value = mapEq(eq.high);
+      // Initialize states for new play with track's specific EQ
+      const currentTrackEQ = trackEQs[id] || { bass: 0, mid: 0, high: 0 };
+      const mixEQ = getMixEQ(mode, currentTrackEQ);
+      bassFilterRef.current!.gain.value = mixEQ.bass;
+      midFilterRef.current!.gain.value = mixEQ.mid;
+      highFilterRef.current!.gain.value = mixEQ.high;
 
       const angle = ((crossfader + 1) / 2) * (Math.PI / 2);
       let vol = 1;
@@ -144,7 +147,7 @@ function useAudioPreview(
       }
       gainRef.current!.gain.value = vol;
       
-      if (ctx.state === 'suspended') ctx.resume();
+      if (ctx.state === "suspended") ctx.resume();
 
       audio.play();
       audio.onended = () => {
@@ -177,20 +180,27 @@ function useAudioPreview(
 }
 
 function MixConsole() {
-  const { tracks, mode, mix } = useMixStore();
+  const { tracks, mode, mix, trackEQs, selectedTrackId } = useMixStore();
   const [rendering, setRendering] = useState(false);
   const [progress, setProgress] = useState(0);
   const navigate = useNavigate();
 
   const [crossfader, setCrossfader] = useState(0);
-  const [eq, setEq] = useState({ bass: 0, mid: 0, high: 0 });
 
   const ordered = tracks.length >= 2 ? orderTracks(tracks, mode) : [];
   const deckA = ordered[0];
   const deckB = ordered[1];
 
+  // Fallback to deckA if no track is explicitly selected
+  const activeTrackId = (selectedTrackId && ordered.some(t => t.id === selectedTrackId)) 
+    ? selectedTrackId 
+    : (deckA?.id || null);
+  const activeTrack = ordered.find(t => t.id === activeTrackId) || deckA;
+  const currentEQ = mixStore.getTrackEQ(activeTrackId);
+
   const { playingId, togglePlay, audioData, audioRef } = useAudioPreview(
-    eq,
+    trackEQs,
+    mode,
     crossfader,
     deckA?.id,
     deckB?.id
@@ -199,6 +209,28 @@ function MixConsole() {
   if (tracks.length < 2) {
     return <EmptyState title="Need more tracks" body="Add at least 2 tracks before mixing." cta={{ to: "/upload", label: "Upload tracks" }} />;
   }
+
+  const handleSelectTrack = (id: string) => {
+    mixStore.setSelectedTrackId(id);
+  };
+
+  const handleEQChange = (band: keyof MixEQ, value: number) => {
+    if (!activeTrackId) return;
+    const updated: MixEQ = {
+      ...currentEQ,
+      [band]: value,
+    };
+    mixStore.setTrackEQ(activeTrackId, updated);
+  };
+
+  const handleResetCurrentEQ = () => {
+    if (!activeTrackId) return;
+    mixStore.setTrackEQ(activeTrackId, { bass: 0, mid: 0, high: 0 });
+  };
+
+  const handleApplyEQToAll = () => {
+    mixStore.setAllTracksEQ(currentEQ);
+  };
 
   const moveTrack = (index: number, direction: -1 | 1) => {
     const newIndex = index + direction;
@@ -220,7 +252,7 @@ function MixConsole() {
     setRendering(true);
     setProgress(0);
     try {
-      const result = await renderMix(tracks, mode, (p) => setProgress(p));
+      const result = await renderMix(tracks, mode, (p) => setProgress(p), trackEQs);
       mixStore.setMix(result);
       setTimeout(() => navigate({ to: "/export" }), 400);
     } catch (e) {
@@ -240,11 +272,34 @@ function MixConsole() {
 
         {/* Dual deck */}
         <div className="mt-8 grid lg:grid-cols-2 gap-5">
-          <Deck label="DECK A" track={deckA} hue={deckA ? KEY_HUES[deckA.key] || "195" : "195"} playingId={playingId} togglePlay={togglePlay} audioData={audioData} audioRef={audioRef} />
-          <Deck label="DECK B" track={deckB} hue={deckB ? KEY_HUES[deckB.key] || "330" : "330"} reverse playingId={playingId} togglePlay={togglePlay} audioData={audioData} audioRef={audioRef} />
+          <Deck 
+            label="DECK A" 
+            track={deckA} 
+            hue={deckA ? KEY_HUES[deckA.key] || "195" : "195"} 
+            playingId={playingId} 
+            togglePlay={togglePlay} 
+            audioData={audioData} 
+            audioRef={audioRef}
+            isSelected={activeTrackId === deckA?.id}
+            onSelect={() => deckA && handleSelectTrack(deckA.id)}
+            trackEQ={deckA ? mixStore.getTrackEQ(deckA.id) : undefined}
+          />
+          <Deck 
+            label="DECK B" 
+            track={deckB} 
+            hue={deckB ? KEY_HUES[deckB.key] || "330" : "330"} 
+            reverse 
+            playingId={playingId} 
+            togglePlay={togglePlay} 
+            audioData={audioData} 
+            audioRef={audioRef}
+            isSelected={activeTrackId === deckB?.id}
+            onSelect={() => deckB && handleSelectTrack(deckB.id)}
+            trackEQ={deckB ? mixStore.getTrackEQ(deckB.id) : undefined}
+          />
         </div>
 
-        {/* Crossfader & controls */}
+        {/* Crossfader & per-song EQ controls */}
         <div className="mt-5 glass-strong rounded-3xl p-6">
           <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-muted-foreground mb-3">
             <span>Crossfader</span>
@@ -272,45 +327,152 @@ function MixConsole() {
             <div className="absolute right-0 text-xs font-mono text-muted-foreground pointer-events-none">B</div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 mt-6">
-            <Knob label="Bass" value={eq.bass} onChange={(v) => setEq({ ...eq, bass: v })} />
-            <Knob label="Mid" value={eq.mid} onChange={(v) => setEq({ ...eq, mid: v })} />
-            <Knob label="High" value={eq.high} onChange={(v) => setEq({ ...eq, high: v })} />
+          {/* Song selector for EQ adjustment */}
+          <div className="mt-8 pt-6 border-t border-white/5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+              <div className="flex items-center gap-2.5">
+                <Sliders className="w-4 h-4 text-[var(--neon-cyan)]" />
+                <span className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Song EQ Tuning:</span>
+                <span className="text-sm font-medium text-foreground bg-white/10 px-3 py-1 rounded-full border border-white/10 flex items-center gap-2 max-w-xs truncate">
+                  <span className="w-2 h-2 rounded-full bg-[var(--neon-cyan)] animate-pulse shrink-0" />
+                  <span className="truncate">{activeTrack?.name || "Selected Track"}</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleResetCurrentEQ}
+                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg transition"
+                  title="Reset EQ for this song"
+                >
+                  <RotateCcw className="w-3 h-3" /> Reset
+                </button>
+                <button
+                  onClick={handleApplyEQToAll}
+                  className="inline-flex items-center gap-1.5 text-xs text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/10 px-3 py-1.5 rounded-lg border border-[var(--neon-cyan)]/20 transition"
+                  title="Apply current EQ to all tracks in mix"
+                >
+                  <Copy className="w-3 h-3" /> Apply to all
+                </button>
+              </div>
+            </div>
+
+            {/* Quick deck selector tabs */}
+            <div className="flex flex-wrap gap-2 mb-6">
+              {deckA && (
+                <button
+                  onClick={() => handleSelectTrack(deckA.id)}
+                  className={`text-xs px-3.5 py-1.5 rounded-full font-medium transition ${
+                    activeTrackId === deckA.id
+                      ? "bg-[var(--neon-cyan)] text-black font-semibold shadow-[0_0_15px_oklch(0.78_0.18_195_/_0.4)]"
+                      : "bg-white/5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+                  }`}
+                >
+                  Deck A: {deckA.name}
+                </button>
+              )}
+              {deckB && (
+                <button
+                  onClick={() => handleSelectTrack(deckB.id)}
+                  className={`text-xs px-3.5 py-1.5 rounded-full font-medium transition ${
+                    activeTrackId === deckB.id
+                      ? "bg-[var(--neon-magenta)] text-white font-semibold shadow-[0_0_15px_oklch(0.7_0.27_330_/_0.4)]"
+                      : "bg-white/5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+                  }`}
+                >
+                  Deck B: {deckB.name}
+                </button>
+              )}
+            </div>
+
+            {/* Knobs */}
+            <div className="grid grid-cols-3 gap-4">
+              <Knob 
+                label="Bass" 
+                value={currentEQ.bass} 
+                onChange={(v) => handleEQChange("bass", v)} 
+              />
+              <Knob 
+                label="Mid" 
+                value={currentEQ.mid} 
+                onChange={(v) => handleEQChange("mid", v)} 
+              />
+              <Knob 
+                label="High" 
+                value={currentEQ.high} 
+                onChange={(v) => handleEQChange("high", v)} 
+              />
+            </div>
           </div>
         </div>
 
-        {/* Queue */}
+        {/* Queue / Mix Order */}
         <div className="mt-8">
           <h2 className="font-display text-xl font-semibold mb-3 flex items-center justify-between">
-            <span>Mix Order</span>
+            <span>Mix Order &amp; Track EQ</span>
             {mode === "Custom" && <span className="text-xs text-[var(--neon-cyan)] font-mono uppercase">Custom Order</span>}
           </h2>
           <div className="glass rounded-2xl divide-y divide-white/5">
-            {ordered.map((t, i) => (
-              <div key={t.id} className="flex items-center gap-3 px-4 py-3 group">
-                <div className="flex flex-col gap-1 items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => moveTrack(i, -1)} disabled={i === 0} className="hover:text-[var(--neon-cyan)] disabled:opacity-30"><ChevronUp className="w-3 h-3" /></button>
-                  <button onClick={() => moveTrack(i, 1)} disabled={i === ordered.length - 1} className="hover:text-[var(--neon-cyan)] disabled:opacity-30"><ChevronDown className="w-3 h-3" /></button>
-                </div>
-                <div className="text-xs font-mono text-muted-foreground w-6 text-center">{String(i + 1).padStart(2, "0")}</div>
-                <button 
-                  onClick={() => togglePlay(t.id, t.url)}
-                  className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-[var(--neon-cyan)] hover:text-black transition shrink-0"
+            {ordered.map((t, i) => {
+              const isSelected = activeTrackId === t.id;
+              const eq = mixStore.getTrackEQ(t.id);
+              const hasCustomEQ = eq.bass !== 0 || eq.mid !== 0 || eq.high !== 0;
+
+              return (
+                <div 
+                  key={t.id} 
+                  className={`flex items-center gap-3 px-4 py-3 group cursor-pointer transition-colors ${
+                    isSelected ? "bg-white/[0.08]" : "hover:bg-white/[0.03]"
+                  }`}
+                  onClick={() => handleSelectTrack(t.id)}
                 >
-                  {playingId === t.id ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
-                </button>
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-sm truncate" style={{ color: playingId === t.id ? 'var(--neon-cyan)' : 'inherit' }}>{t.name}</div>
+                  <div className="flex flex-col gap-1 items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); moveTrack(i, -1); }} 
+                      disabled={i === 0} 
+                      className="hover:text-[var(--neon-cyan)] disabled:opacity-30"
+                    >
+                      <ChevronUp className="w-3 h-3" />
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); moveTrack(i, 1); }} 
+                      disabled={i === ordered.length - 1} 
+                      className="hover:text-[var(--neon-cyan)] disabled:opacity-30"
+                    >
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div className="text-xs font-mono text-muted-foreground w-6 text-center">{String(i + 1).padStart(2, "0")}</div>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); togglePlay(t.id, t.url); }}
+                    className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-[var(--neon-cyan)] hover:text-black transition shrink-0"
+                  >
+                    {playingId === t.id ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-sm truncate flex items-center gap-2" style={{ color: playingId === t.id ? "var(--neon-cyan)" : "inherit" }}>
+                      <span className="truncate">{t.name}</span>
+                      {isSelected && (
+                        <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-[var(--neon-cyan)]/20 text-[var(--neon-cyan)] border border-[var(--neon-cyan)]/30 shrink-0">
+                          EQ Active
+                        </span>
+                      )}
+                      {hasCustomEQ && !isSelected && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-muted-foreground shrink-0" title={`Bass: ${eq.bass.toFixed(2)}, Mid: ${eq.mid.toFixed(2)}, High: ${eq.high.toFixed(2)}`}>
+                          EQ Mod
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-xs font-mono text-muted-foreground hidden sm:block">{t.bpm.toFixed(1)} BPM</div>
+                  <div className="text-xs font-mono text-[var(--neon-cyan)] hidden sm:block">{t.key}</div>
+                  <div className="text-xs font-mono text-muted-foreground">{fmtTime(t.duration)}</div>
                 </div>
-                <div className="text-xs font-mono text-muted-foreground hidden sm:block">{t.bpm.toFixed(1)} BPM</div>
-                <div className="text-xs font-mono text-[var(--neon-cyan)] hidden sm:block">{t.key}</div>
-                <div className="text-xs font-mono text-muted-foreground">{fmtTime(t.duration)}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
-        {/* Render */}
+        {/* Render Final Mix */}
         <div className="mt-8 glass-strong rounded-3xl p-6 sm:p-8 relative overflow-hidden">
           <div className="absolute -top-20 -right-20 w-72 h-72 rounded-full opacity-30" style={{ background: "radial-gradient(circle, oklch(0.7 0.27 330 / 0.6), transparent 70%)" }} />
           <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -319,7 +481,9 @@ function MixConsole() {
                 <Wand2 className="w-5 h-5 text-[var(--neon-magenta)]" />
                 Render Final Mix
               </h3>
-              <p className="text-sm text-muted-foreground mt-1">AI will arrange, crossfade and master your set.</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                AI will master your set in <span className="text-[var(--neon-cyan)] font-medium">{mode}</span> mode with custom track EQ.
+              </p>
             </div>
             <button
               disabled={rendering}
@@ -348,7 +512,7 @@ function MixConsole() {
                     style={{ width: `${progress * 100}%` }}
                   />
                 </div>
-                <div className="mt-2 text-xs text-muted-foreground font-mono">{Math.round(progress * 100)}% — {progress < 0.4 ? "Aligning beats" : progress < 0.95 ? "Mastering output" : "Finalizing"}</div>
+                <div className="mt-2 text-xs text-muted-foreground font-mono">{Math.round(progress * 100)}% — {progress < 0.4 ? "Applying track EQ & beat alignment" : progress < 0.95 ? `Mastering ${mode} dynamics` : "Finalizing WAV"}</div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -358,24 +522,65 @@ function MixConsole() {
   );
 }
 
-function Deck({ label, track, hue, reverse, playingId, togglePlay, audioData, audioRef }: { label: string; track: any; hue: string; reverse?: boolean; playingId: string | null; togglePlay: (id: string, url: string) => void; audioData?: Uint8Array; audioRef?: React.MutableRefObject<HTMLAudioElement | null> }) {
-  const isPlaying = playingId === track.id;
+function Deck({ 
+  label, 
+  track, 
+  hue, 
+  reverse, 
+  playingId, 
+  togglePlay, 
+  audioData, 
+  audioRef,
+  isSelected,
+  onSelect,
+  trackEQ
+}: { 
+  label: string; 
+  track: any; 
+  hue: string; 
+  reverse?: boolean; 
+  playingId: string | null; 
+  togglePlay: (id: string, url: string) => void; 
+  audioData?: Uint8Array; 
+  audioRef?: React.MutableRefObject<HTMLAudioElement | null>;
+  isSelected?: boolean;
+  onSelect?: () => void;
+  trackEQ?: MixEQ;
+}) {
+  const isPlaying = playingId === track?.id;
   
   // Audio reactive glow based on bass (first few bins)
   const bass = isPlaying && audioData && audioData.length > 0 ? audioData[1] / 255 : 0;
-  const pulseScale = 1 + bass * 0.25; // 1 to 1.25 scale based on bass
+  const pulseScale = 1 + bass * 0.25;
   const pulseOpacity = 0.3 + bass * 0.4;
 
+  if (!track) return null;
+
   return (
-    <div className="glass-strong rounded-3xl p-6 relative overflow-hidden transition-colors" style={{ borderColor: isPlaying ? `oklch(0.7 0.25 ${hue} / 0.4)` : '' }}>
+    <div 
+      onClick={onSelect}
+      className={`glass-strong rounded-3xl p-6 relative overflow-hidden transition-all cursor-pointer ${
+        isSelected 
+          ? "ring-2 ring-[var(--neon-cyan)] shadow-[0_0_25px_oklch(0.78_0.18_195_/_0.3)]" 
+          : "hover:bg-white/[0.04]"
+      }`} 
+      style={{ borderColor: isPlaying ? `oklch(0.7 0.25 ${hue} / 0.4)` : "" }}
+    >
       <motion.div 
-        className="absolute -top-20 -left-20 w-64 h-64 rounded-full" 
+        className="absolute -top-20 -left-20 w-64 h-64 rounded-full pointer-events-none" 
         style={{ background: `radial-gradient(circle, oklch(0.7 0.25 ${hue} / ${pulseOpacity}), transparent 70%)` }} 
         animate={{ scale: pulseScale }}
         transition={{ type: "spring", stiffness: 300, damping: 20 }}
       />
       <div className="relative flex items-center justify-between text-[11px] uppercase tracking-[0.25em] text-muted-foreground">
-        <span>{label}</span>
+        <div className="flex items-center gap-2">
+          <span>{label}</span>
+          {isSelected && (
+            <span className="text-[10px] text-[var(--neon-cyan)] font-mono font-bold bg-[var(--neon-cyan)]/10 px-2 py-0.5 rounded-full border border-[var(--neon-cyan)]/30">
+              EDITING EQ
+            </span>
+          )}
+        </div>
         <span style={{ color: `oklch(0.85 0.2 ${hue})` }}>● CUED</span>
       </div>
       <div className="relative mt-4 flex items-center gap-4">
@@ -385,7 +590,6 @@ function Deck({ label, track, hue, reverse, playingId, togglePlay, audioData, au
           dragElastic={0.1}
           onDrag={(e, info) => {
             if (isPlaying && audioRef?.current) {
-               // Vinyl scratching effect: scrub audio backward/forward based on drag delta
                const delta = info.delta.x;
                audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - delta * 0.05);
                audioRef.current.playbackRate = Math.max(0.1, Math.min(2.0, 1 + delta * 0.1));
@@ -397,13 +601,13 @@ function Deck({ label, track, hue, reverse, playingId, togglePlay, audioData, au
             }
           }}
           onClick={(e) => {
-            // Prevent play toggle if they were just dragging
+            e.stopPropagation();
             if (Math.abs((e as any).clientX) > 0) togglePlay(track.id, track.url);
           }}
-          className={`relative w-24 h-24 rounded-full transition-transform hover:scale-105 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing shadow-lg ${isPlaying ? 'animate-spin-slow glow-cyan' : ''}`}
+          className={`relative w-24 h-24 rounded-full transition-transform hover:scale-105 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing shadow-lg ${isPlaying ? "animate-spin-slow glow-cyan" : ""}`}
           style={{ 
             background: `conic-gradient(oklch(0.7 0.25 ${hue}), oklch(0.18 0.04 280), oklch(0.7 0.25 ${hue}))`,
-            boxShadow: isPlaying ? `0 0 30px oklch(0.7 0.25 ${hue} / 0.5)` : ''
+            boxShadow: isPlaying ? `0 0 30px oklch(0.7 0.25 ${hue} / 0.5)` : ""
           }}
         >
           <div className="absolute inset-2 rounded-full bg-background flex items-center justify-center pointer-events-none">
@@ -413,9 +617,14 @@ function Deck({ label, track, hue, reverse, playingId, togglePlay, audioData, au
         <div className="min-w-0 flex-1">
           <div className="font-display font-semibold text-lg truncate">{track.name}</div>
           <div className="mt-1 text-xs font-mono text-muted-foreground">{track.bpm.toFixed(1)} BPM · {track.key} · {fmtTime(track.duration)}</div>
-          <div className="mt-3 flex gap-3 text-[10px] uppercase tracking-wider">
+          <div className="mt-3 flex flex-wrap gap-2 text-[10px] uppercase tracking-wider">
             <Pill label="Energy" value={Math.round(track.energy * 100) + "%"} />
             <Pill label="Vol" value={`${track.loudness}dB`} />
+            {trackEQ && (trackEQ.bass !== 0 || trackEQ.mid !== 0 || trackEQ.high !== 0) && (
+              <div className="glass rounded-md px-2 py-1 text-[var(--neon-cyan)] border border-[var(--neon-cyan)]/20 font-mono">
+                EQ: B{trackEQ.bass > 0 ? `+${trackEQ.bass.toFixed(1)}` : trackEQ.bass.toFixed(1)} M{trackEQ.mid > 0 ? `+${trackEQ.mid.toFixed(1)}` : trackEQ.mid.toFixed(1)} H{trackEQ.high > 0 ? `+${trackEQ.high.toFixed(1)}` : trackEQ.high.toFixed(1)}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -437,8 +646,10 @@ function Pill({ label, value }: { label: string; value: string }) {
 
 function Knob({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
   const rotation = value * 135;
+  const displayVal = value > 0 ? `+${(value * 8).toFixed(1)}dB` : value < 0 ? `${(value * 24).toFixed(1)}dB` : "0dB";
+
   return (
-    <div className="text-center group relative">
+    <div className="text-center group relative select-none">
       <div className="mx-auto relative w-16 h-16 rounded-full glass border border-white/10 flex items-center justify-center">
         <input 
           type="range" 
@@ -446,20 +657,25 @@ function Knob({ label, value, onChange }: { label: string; value: number; onChan
           value={value} 
           onChange={(e) => onChange(parseFloat(e.target.value))}
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-          title={label}
+          title={`${label}: ${displayVal}`}
         />
-        <div className="absolute inset-1 rounded-full" style={{
+        <div className="absolute inset-1 rounded-full pointer-events-none" style={{
           background: "conic-gradient(from 225deg, var(--neon-cyan) 0deg, var(--neon-magenta) 270deg, transparent 270deg, transparent 360deg)",
           opacity: 0.5,
         }} />
         <div 
-          className="relative w-10 h-10 rounded-full bg-background/80 border border-white/10 flex items-start justify-center pt-1 transition-transform duration-75 group-hover:bg-background"
+          className="relative w-10 h-10 rounded-full bg-background/80 border border-white/10 flex items-start justify-center pt-1 transition-transform duration-75 group-hover:bg-background pointer-events-none"
           style={{ transform: `rotate(${rotation}deg)` }}
         >
-          <div className="w-0.5 h-3 rounded-full bg-[var(--neon-cyan)]" />
+          <div className="w-0.5 h-3 rounded-full bg-[var(--neon-cyan)] shadow-[0_0_8px_var(--neon-cyan)]" />
         </div>
       </div>
-      <div className="mt-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground group-hover:text-foreground transition-colors">{label}</div>
+      <div className="mt-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground group-hover:text-foreground transition-colors font-medium">
+        {label}
+      </div>
+      <div className="text-[10px] font-mono text-[var(--neon-cyan)] opacity-70 group-hover:opacity-100 transition-opacity">
+        {displayVal}
+      </div>
     </div>
   );
 }
